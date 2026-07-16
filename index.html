@@ -160,6 +160,21 @@
   .portwarn{font-size:11px;color:#e9c877;background:var(--warnbg);border:1px solid var(--warnbd);border-radius:7px;padding:7px 9px;margin-top:8px;display:none;line-height:1.45}
   .portwarn.show{display:block}
 
+  /* QA / Explorer */
+  .qa-gate{border:1px solid var(--warnbd);background:var(--warnbg);border-radius:8px;padding:10px;color:#e9c877;font-size:12px;line-height:1.5;margin-bottom:10px}
+  .qa-gate b{color:#ffdf8e;font-weight:700}
+  #qaBody{display:none}
+  #qaBody.on{display:block}
+  .qa-cust{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--ln);border-radius:7px;margin-bottom:4px;background:var(--panel3);font-size:12px;cursor:pointer}
+  .qa-cust:hover{border-color:#3a4d61;background:#16202c}
+  .qa-cust .lb{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+  .qa-cust .fl{font-size:10px;font-weight:800;padding:2px 6px;border-radius:5px;border:1px solid var(--failbd);background:var(--failbg);color:var(--fail);white-space:nowrap}
+  .qa-cust .fl.okf{border-color:var(--okbd);background:var(--okbg);color:var(--ok)}
+  .qa-prog{height:6px;background:var(--panel3);border-radius:4px;overflow:hidden;margin:8px 0}
+  .qa-prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .2s}
+  .qa-sum{font-size:11px;color:var(--tx2);margin:6px 0}
+  .mode-tag.qa{border-color:var(--failbd);background:var(--failbg);color:var(--fail)}
+
   /* ---- Console -------------------------------------------------------- */
   #con{flex:0 0 auto;height:180px;display:flex;flex-direction:column;background:var(--panel2);border-top:1px solid var(--ln)}
   #con.collapsed{height:auto}
@@ -246,6 +261,7 @@
         <button data-tab="disc">Descubrimiento</button>
         <button data-tab="watch">Watchlist</button>
         <button data-tab="skin">Skin</button>
+        <button data-tab="qa">QA</button>
       </div>
 
       <!-- Capabilities -->
@@ -301,6 +317,60 @@
           <button class="btn sm ghost" id="copyStyle">⧉ Copy Style</button>
           <button class="btn sm ghost" id="copyScript">⧉ Copy Script</button>
           <button class="btn sm ghost" id="copyBoth">⧉ Copy Both</button>
+        </div>
+      </div>
+
+      <!-- QA / Customer Explorer + Stress Test -->
+      <div class="pane" data-pane="qa">
+        <div class="qa-gate" id="qaGate">
+          <b>⚠ QA mode</b> — este modo <b>llama funciones del app y navega</b> entre registros, así que rompe Non-invasive. <b>Nunca</b> envía correos, guarda ni escribe a Firestore: solo <b>abre y lee</b>. Actívalo a propósito.
+          <div style="margin-top:8px"><button class="btn sm" id="qaEnable">Activar QA mode</button></div>
+        </div>
+
+        <div id="qaBody">
+          <div class="skinlabel">EXPLORER</div>
+          <div class="toolrow">
+            <input type="text" id="qaListSel" class="mono" placeholder="selector de filas (auto si vacío)" style="flex:1;min-width:120px">
+            <button class="btn sm" id="qaScrape">⟳ Refrescar</button>
+          </div>
+          <div class="toolrow">
+            <input type="text" id="qaSearch" placeholder="Buscar cliente…" style="flex:1;min-width:120px">
+            <select id="qaOrder" style="flex:0 0 auto">
+              <option value="dom">Orden original</option>
+              <option value="rev">Invertir</option>
+              <option value="rand">Random</option>
+            </select>
+          </div>
+          <div class="qa-sum" id="qaCount">—</div>
+          <div id="qaList" style="max-height:190px;overflow:auto"></div>
+
+          <div style="border-top:1px solid var(--ln);margin:12px 0 0;padding-top:12px">
+            <div class="skinlabel">STRESS TEST &nbsp;<span class="count">abre y revisa el layout</span></div>
+            <div class="toolrow">
+              <select id="qaScope" style="flex:1">
+                <option value="all">Todos</option>
+                <option value="25">Primeros 25</option>
+                <option value="50">Primeros 50</option>
+                <option value="r25">25 al azar</option>
+                <option value="r50">50 al azar</option>
+              </select>
+              <select id="qaDelay" style="flex:0 0 auto" title="Espera por cliente">
+                <option value="250">250 ms</option>
+                <option value="400" selected>400 ms</option>
+                <option value="700">700 ms</option>
+                <option value="1000">1 s</option>
+              </select>
+            </div>
+            <div class="toolrow">
+              <button class="btn primary" id="qaRun">▶ Correr Stress Test</button>
+              <button class="btn danger sm" id="qaStop" disabled>■ Detener</button>
+            </div>
+            <div class="qa-prog"><i id="qaBar"></i></div>
+            <div class="qa-sum" id="qaResSum">Sin ejecutar.</div>
+            <label style="font-size:11px;color:var(--tx3);display:flex;align-items:center;gap:6px;margin-bottom:6px"><input type="checkbox" id="qaOnlyFlagged" checked> Mostrar solo con posibles problemas</label>
+            <div id="qaResults" style="max-height:210px;overflow:auto"></div>
+          </div>
+          <p class="panehint" style="margin-top:8px">Chequeos genéricos: scroll horizontal, elementos fuera del viewport y contenido cortado. Son <b>señales</b> y pueden dar falsos positivos; afinamos la sensibilidad con lo que veas. Empieza con una muestra antes de correr Todos.</p>
         </div>
       </div>
     </aside>
@@ -784,6 +854,139 @@
   var con=$("con"), tgl=$("conToggle");
   tgl.addEventListener("click",function(){ con.classList.toggle("collapsed"); tgl.textContent=con.classList.contains("collapsed")?"Mostrar consola":"Ocultar consola"; });
   window.addEventListener("beforeunload",function(){ saveActive(); revokeBlob(); });
+
+  /* ---------- QA / Customer Explorer + Stress Test (opt-in, never writes) -- *
+   * QA mode calls the app's OWN functions (by clicking its real rows) and
+   * navigates between records. It ONLY opens + reads the DOM. It never sends
+   * email, saves, writes to Firestore, or fires any side-effectful action.
+   */
+  var qaMode=false, qaCustomers=[], qaView=[], qaResults=[], qaRunning=false, qaStopFlag=false;
+  var qaGate=$("qaGate"), qaBody=$("qaBody"), qaListSel=$("qaListSel"), qaSearch=$("qaSearch"), qaOrder=$("qaOrder");
+  var qaListEl=$("qaList"), qaCountEl=$("qaCount"), qaBar=$("qaBar"), qaResSum=$("qaResSum"), qaResultsEl=$("qaResults"), qaOnlyFlagged=$("qaOnlyFlagged");
+  var btnQaRun=$("qaRun"), btnQaStop=$("qaStop"), modeTag=$("modeTag");
+
+  function qaSetMode(on){
+    qaMode=on; qaGate.style.display=on?"none":"block"; qaBody.classList.toggle("on",on);
+    modeTag.textContent=on?"MODE: QA (invasive)":"MODE: NON-INVASIVE"; modeTag.classList.toggle("qa",on);
+    if(on){ logLine("warn","QA MODE ACTIVADO — el sandbox ahora LLAMA funciones del app (abriendo sus filas reales) y navega entre registros. NUNCA envía correos, guarda ni escribe a Firestore: solo abre y lee. Vuelve a Non-invasive recargando el app."); qaScrape(); }
+    else logLine("info","QA mode desactivado. De vuelta a Non-invasive (solo lectura).");
+  }
+
+  // Find the record-list container in the loaded app (auto-detect, or use the field).
+  function qaFindList(d){
+    var cands=[(qaListSel.value||"").trim(),"#custGrid",".qb-cust-list",".qb-cust-side","[id*=cust][id*=rid]","[class*=cust][class*=list]"];
+    for(var i=0;i<cands.length;i++){ if(!cands[i]) continue; try{ var el=d.querySelector(cands[i]); if(el && el.children && el.children.length>1) return el; }catch(_e){} }
+    return null;
+  }
+  function qaLabelOf(el){ var t=(el.textContent||"").replace(/\s+/g," ").trim(); return t? (t.length>64?t.slice(0,64)+"…":t) : "(sin texto)"; }
+  function qaScrape(){
+    var d=safeDoc();
+    if(d===CROSS){ qaCustomers=[]; qaCountEl.textContent="No legible (cross-origin)."; qaListEl.innerHTML=""; return; }
+    if(!d){ qaCustomers=[]; qaCountEl.textContent="Sin app cargado."; qaListEl.innerHTML=""; return; }
+    var cont=qaFindList(d);
+    if(!cont){ qaCustomers=[]; qaCountEl.textContent="No encontré la lista. Escribe el selector de las filas y pulsa Refrescar."; qaListEl.innerHTML=""; return; }
+    var rows=Array.prototype.slice.call(cont.children).filter(function(el){ return (el.textContent||"").trim().length>1; });
+    qaCustomers=rows.map(function(el){ return {el:el, label:qaLabelOf(el)}; });
+    logLine("ok","Explorer: "+qaCustomers.length+" registros leídos de la lista del app.");
+    qaRender();
+  }
+
+  function qaApplyView(){
+    var q=(qaSearch.value||"").toLowerCase();
+    var arr=qaCustomers.filter(function(c){ return !q || c.label.toLowerCase().indexOf(q)>=0; });
+    var ord=qaOrder.value;
+    if(ord==="rev") arr=arr.slice().reverse();
+    else if(ord==="rand"){ arr=arr.slice(); for(var i=arr.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)),t=arr[i];arr[i]=arr[j];arr[j]=t; } }
+    qaView=arr;
+  }
+  function qaRender(){
+    qaApplyView();
+    qaCountEl.textContent=qaView.length+" de "+qaCustomers.length+" registros";
+    qaListEl.innerHTML=qaView.length? qaView.map(function(c,i){ return '<div class="qa-cust" data-i="'+i+'"><span class="lb">'+escapeHtml(c.label)+'</span></div>'; }).join("")
+      : '<div class="panehint" style="margin:6px 0 0">Sin registros. Carga un app con lista y pulsa Refrescar.</div>';
+    Array.prototype.forEach.call(qaListEl.querySelectorAll(".qa-cust"),function(node){
+      node.addEventListener("click",function(){ var c=qaView[parseInt(node.getAttribute("data-i"),10)]; if(c) qaOpen(c); });
+    });
+  }
+  function qaOpen(c){ try{ c.el.scrollIntoView({block:"center"}); c.el.click(); logLine("ok","Abierto: "+c.label); }catch(e){ logLine("error","No se pudo abrir: "+(e&&e.message||e)); } }
+
+  // ---- generic layout health checks (read-only) ----
+  function qaCheckLayout(){
+    var d=safeDoc(), w=safeWin();
+    if(!d||d===CROSS||!w) return {ok:false, hscroll:false, off:0, clip:0, note:"no legible"};
+    var off=0, clip=0, hscroll=false;
+    try{
+      var de=d.documentElement, vw=w.innerWidth||de.clientWidth;
+      if(de.scrollWidth>vw+4) hscroll=true;
+      var body=d.body;
+      if(body){
+        var all=body.querySelectorAll("*"), lim=Math.min(all.length,4000);
+        for(var i=0;i<lim;i++){
+          var el=all[i], cs; try{ cs=w.getComputedStyle(el); }catch(_e){ continue; }
+          if(cs.display==="none"||cs.visibility==="hidden") continue;
+          var r; try{ r=el.getBoundingClientRect(); }catch(_e){ continue; }
+          if(r.width===0&&r.height===0) continue;
+          if(r.right>vw+8 && r.left<vw && cs.position!=="fixed") off++;
+          if((cs.overflowY==="hidden"||cs.overflow==="hidden") && el.clientHeight>0 && el.scrollHeight>el.clientHeight+6 && (el.textContent||"").trim().length>4) clip++;
+        }
+      }
+    }catch(e){ return {ok:false, hscroll:hscroll, off:off, clip:clip, note:"error "+(e&&e.message)}; }
+    return {ok:(!hscroll&&off===0&&clip===0), hscroll:hscroll, off:off, clip:clip};
+  }
+
+  function qaSample(){
+    var s=$("qaScope").value, arr=qaCustomers.slice();
+    if(s==="all") return arr;
+    if(s.charAt(0)==="r"){ var n=parseInt(s.slice(1),10); for(var i=arr.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)),t=arr[i];arr[i]=arr[j];arr[j]=t; } return arr.slice(0,n); }
+    return arr.slice(0,parseInt(s,10));
+  }
+  function qaRun(){
+    if(qaRunning) return;
+    if(!qaCustomers.length){ logLine("warn","No hay registros. Pulsa Refrescar primero."); return; }
+    var sample=qaSample(), delay=parseInt($("qaDelay").value,10);
+    qaResults=[]; qaRunning=true; qaStopFlag=false; btnQaRun.disabled=true; btnQaStop.disabled=false;
+    logLine("warn","Stress Test: recorriendo "+sample.length+" registros (solo abre y lee; sin escrituras).");
+    qaStep(sample,0,delay);
+  }
+  function qaStep(sample,i,delay){
+    if(qaStopFlag||i>=sample.length){ qaFinish(); return; }
+    var c=sample[i];
+    try{ c.el.scrollIntoView({block:"center"}); c.el.click(); }catch(_e){}
+    qaBar.style.width=Math.round((i+1)/sample.length*100)+"%";
+    setTimeout(function(){
+      qaResults.push({label:c.label, h:qaCheckLayout()});
+      qaResSum.textContent="Procesados "+(i+1)+" / "+sample.length+" · con posibles problemas: "+qaResults.filter(function(x){return !x.h.ok;}).length;
+      qaRenderResults();
+      qaStep(sample,i+1,delay);
+    }, delay);
+  }
+  function qaFinish(){
+    qaRunning=false; btnQaRun.disabled=false; btnQaStop.disabled=true;
+    var bad=qaResults.filter(function(x){return !x.h.ok;}).length;
+    logLine(bad?"warn":"ok","Stress Test terminado: "+qaResults.length+" revisados, "+bad+" con posibles problemas de layout.");
+    qaResSum.textContent="Terminado: "+qaResults.length+" revisados · "+bad+" con posibles problemas.";
+    qaRenderResults();
+  }
+  function qaRenderResults(){
+    var only=qaOnlyFlagged.checked, arr=qaResults.filter(function(x){ return !only || !x.h.ok; });
+    qaResultsEl.innerHTML=arr.length? arr.map(function(x){
+      var flag=x.h.ok ? '<span class="fl okf">OK</span>'
+        : '<span class="fl">'+[x.h.hscroll?"H-scroll":null,x.h.off?(x.h.off+" fuera"):null,x.h.clip?(x.h.clip+" cortado"):null,x.h.note||null].filter(Boolean).join(" · ")+'</span>';
+      return '<div class="qa-cust" data-lb="'+escapeHtml(x.label)+'"><span class="lb">'+escapeHtml(x.label)+'</span>'+flag+'</div>';
+    }).join("") : '<div class="panehint" style="margin:6px 0 0">'+(qaResults.length?"Sin problemas detectados. 🎉":"Sin resultados aún.")+'</div>';
+    Array.prototype.forEach.call(qaResultsEl.querySelectorAll(".qa-cust"),function(node){
+      node.addEventListener("click",function(){ var lb=node.getAttribute("data-lb"), c=qaCustomers.filter(function(y){return y.label===lb;})[0]; if(c) qaOpen(c); });
+    });
+  }
+
+  // wire QA
+  $("qaEnable").addEventListener("click",function(){ qaSetMode(true); });
+  $("qaScrape").addEventListener("click",qaScrape);
+  qaSearch.addEventListener("input",qaRender);
+  qaOrder.addEventListener("change",qaRender);
+  btnQaRun.addEventListener("click",qaRun);
+  btnQaStop.addEventListener("click",function(){ qaStopFlag=true; logLine("info","Stress Test detenido por el usuario."); });
+  qaOnlyFlagged.addEventListener("change",qaRenderResults);
 
   /* ---------- boot -------------------------------------------------------- */
   logLine("info","HTML App Sandbox listo (Fase 1, modo NON-INVASIVE). No modifica console/fetch/XHR/Firebase/datos; sin observers ni wrappers. No asume Aspen, Customer ni ninguna función específica.");
