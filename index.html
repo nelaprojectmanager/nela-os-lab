@@ -874,9 +874,24 @@
 
   // Find the record-list container in the loaded app (auto-detect, or use the field).
   function qaFindList(d){
-    var cands=[(qaListSel.value||"").trim(),"#custGrid",".qb-cust-list",".qb-cust-side","[id*=cust][id*=rid]","[class*=cust][class*=list]"];
+    // 1) explicit field selector or known ids (fast path)
+    var cands=[(qaListSel.value||"").trim(),"#custGrid",".qb-cust-list",".qb-cust-side"];
     for(var i=0;i<cands.length;i++){ if(!cands[i]) continue; try{ var el=d.querySelector(cands[i]); if(el && el.children && el.children.length>1) return el; }catch(_e){} }
-    return null;
+    // 2) content-based: the container whose direct children look like list rows.
+    //    Each customer row carries a phone number, so we pick the element with the
+    //    most phone-bearing direct children. Works regardless of class names/version.
+    var phone=/\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/;
+    var best=null, bestHits=0;
+    try{
+      var nodes=d.body.querySelectorAll("div,ul,ol,tbody,section");
+      for(var n=0;n<nodes.length;n++){
+        var c=nodes[n], kids=c.children; if(!kids||kids.length<3) continue;
+        var m=Math.min(kids.length,400), hits=0;
+        for(var k=0;k<m;k++){ if(phone.test(kids[k].textContent||"")) hits++; }
+        if(hits>=3 && hits/m>=0.5 && hits>bestHits){ bestHits=hits; best=c; }
+      }
+    }catch(_e){}
+    return best;
   }
   function qaLabelOf(el){ var t=(el.textContent||"").replace(/\s+/g," ").trim(); return t? (t.length>64?t.slice(0,64)+"…":t) : "(sin texto)"; }
   function qaScrape(){
