@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>HTML App Sandbox</title>
+<!--
+  ============================================================================
+  HTML APP SANDBOX  —  Phase 1 (universal, single self-contained file)
+  ----------------------------------------------------------------------------
+  A project-agnostic visual lab for ANY single-page HTML app. It loads a target
+  app in an <iframe>, detects its capabilities WITHOUT assuming any of them
+  exist, and lets you inject/export a portable "skin" (a <style>+<script> pair)
+  into the running app's in-memory DOM.
+
+  DESIGN PRINCIPLES
+    * Assumes nothing. Every probe is tri-state: detected / not detected /
+      not readable (cross-origin) / pending / error. "Not detected" is NEVER
+      treated as an error.
+    * The HOST (this whole file: toolbar, panels, console, loader, injector,
+      profiles) is DISPOSABLE scaffolding. It is never exported.
+    * The SKIN (the two blocks, IDs configurable per profile) is PORTABLE:
+      it references ONLY `document` + the target app's own globals. It must
+      NOT use parent / top / frameElement / postMessage, must not depend on
+      the file name or on blob vs relative-path loading, and must run
+      identically when pasted verbatim at the end of the target app.
+
+  NON-INVASIVE BY DEFAULT (Phase 1)
+    The sandbox does NOT patch console, create MutationObservers, wrap app
+    functions, alter fetch/XHR/Firebase, add DB listeners, write to the app's
+    storage, or modify data. It only READS via property checks and injects the
+    skin into the iframe DOM. Advanced instrumentation is out of Phase 1.
+
+  NOT IN PHASE 1: version compare, pixel diff, overlay, advanced responsive,
+    invasive inspection, any Aspen/Nela redesign.
+  ============================================================================
+-->
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#111823; --panel2:#0d1520; --panel3:#0a121b; --ln:#22303f;
+    --tx:#e6edf3; --tx2:#9fb0c0; --tx3:#6b7d8f;
+    --ok:#3fb950; --okbg:#0f2a17; --okbd:#1f5c2f;
+    --warn:#d29922; --warnbg:#2a2110; --warnbd:#5c4a1f;
+    --fail:#f85149; --failbg:#2a1212; --failbd:#5c1f1f;
+    --pend:#6b7d8f; --pendbg:#161e28; --pendbd:#2b3a4a;
+    --info:#58a6ff; --infobd:#1f3f66;
+    --acc:#7c5cff; --acc2:#22b8cf;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    display:flex;flex-direction:column;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;font-size:14px;
+  }
+  button{font-family:inherit}
+
+  /* ---- Top bar -------------------------------------------------------- */
+  #hdr{flex:0 0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:8px 14px;background:linear-gradient(180deg,#141c27,#0f1620);border-bottom:1px solid var(--ln)}
+  .brand{display:inline-flex;align-items:center;gap:9px;font-weight:800;font-size:13px;letter-spacing:.5px;padding:7px 13px;border-radius:999px;color:#fff;white-space:nowrap;background:linear-gradient(90deg,var(--acc),var(--acc2));box-shadow:0 0 0 1px rgba(255,255,255,.12),0 6px 18px rgba(124,92,255,.28)}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:#fff;box-shadow:0 0 0 0 rgba(255,255,255,.7);animation:pulse 1.8s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.6)}70%{box-shadow:0 0 0 8px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+  .sub{font-size:11px;color:var(--tx3);line-height:1.3;max-width:250px}
+  .sub b{color:var(--tx2);font-weight:700}
+  .spacer{flex:1 1 auto}
+  .mode-tag{font-size:11px;font-weight:700;letter-spacing:.4px;padding:5px 10px;border-radius:999px;border:1px solid var(--okbd);background:var(--okbg);color:var(--ok);white-space:nowrap}
+
+  /* ---- Profile bar ---------------------------------------------------- */
+  #profbar{flex:0 0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 14px;background:var(--panel3);border-bottom:1px solid var(--ln)}
+  #profbar .lbl{font-size:11px;color:var(--tx3);font-weight:700;letter-spacing:.3px}
+  select,input[type=text]{background:var(--panel2);border:1px solid var(--ln);color:var(--tx);border-radius:7px;padding:7px 9px;font-size:12.5px}
+  select{cursor:pointer}
+  .mono{font-family:ui-monospace,Menlo,Consolas,"Roboto Mono",monospace}
+
+  /* ---- Source row ----------------------------------------------------- */
+  #srcbar{flex:0 0 auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--ln)}
+  .seg{display:inline-flex;border:1px solid var(--ln);border-radius:9px;overflow:hidden;background:var(--panel2)}
+  .seg button{font-weight:700;font-size:11.5px;color:var(--tx2);background:transparent;border:0;padding:9px 13px;cursor:pointer;letter-spacing:.3px}
+  .seg button.on{background:linear-gradient(90deg,var(--acc),var(--acc2));color:#fff}
+  .seg button:not(.on):hover{background:#16202c;color:var(--tx)}
+  #localCtl,#pathCtl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  #pathCtl input{min-width:320px}
+  .fname{font-size:12px;color:var(--tx3);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fname b{color:#84e39a;font-weight:700}
+
+  /* ---- Buttons -------------------------------------------------------- */
+  .btn{font-weight:600;font-size:12.5px;color:var(--tx);background:var(--panel);border:1px solid var(--ln);border-radius:8px;padding:9px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.12s;white-space:nowrap}
+  .btn:hover:not(:disabled){border-color:#3a4d61;background:#16202c}
+  .btn:active:not(:disabled){transform:translateY(1px)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.primary{border-color:#4a3f8f;background:#191436;color:#c3b7ff}
+  .btn.primary:hover:not(:disabled){background:#211a45}
+  .btn.file{color:#dbe7f3;background:#15202c;border-color:#2f4256}
+  .btn.file:hover{background:#1a2836;border-color:#3a4f66}
+  .btn.ghost{color:var(--tx2)}
+  .btn.danger{color:#ffb4b0;border-color:#5c1f1f;background:#241111}
+  .btn.danger:hover{background:#2e1414}
+  .btn.sm{padding:6px 10px;font-size:11.5px}
+
+  /* ---- Warning banner ------------------------------------------------- */
+  #warn{display:none;align-items:flex-start;gap:9px;padding:9px 14px;background:var(--warnbg);border-bottom:1px solid var(--warnbd);color:#e9c877;font-size:12px;line-height:1.45}
+  #warn.show{display:flex}
+  #warn .en{color:#ffe6a3;font-weight:600}
+  #warn b{color:#ffdf8e;font-weight:700}
+
+  /* ---- Main split: iframe + right dock -------------------------------- */
+  #main{flex:1 1 auto;min-height:0;display:flex}
+  #stage{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;background:#fff;position:relative}
+  #frame{flex:1 1 auto;width:100%;height:100%;border:0;background:#fff;display:block}
+  #stageEmpty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;color:#9aa7b4;background:repeating-linear-gradient(45deg,#0e1620,#0e1620 12px,#0c141d 12px,#0c141d 24px);text-align:center;padding:20px}
+  #stageEmpty .big{font-size:15px;font-weight:700;color:#c4d0dc}
+  #stageEmpty .sm{font-size:12.5px;color:#7f8d9b;max-width:420px}
+
+  /* ---- Right dock (capabilities / discovery / watchlist / skin) ------- */
+  #dock{flex:0 0 396px;max-width:44vw;display:flex;flex-direction:column;background:var(--panel2);border-left:1px solid var(--ln);min-height:0}
+  .tabs{display:flex;flex:0 0 auto;border-bottom:1px solid var(--ln);background:var(--panel)}
+  .tabs button{flex:1;font-weight:700;font-size:11.5px;letter-spacing:.2px;color:var(--tx3);background:transparent;border:0;border-bottom:2px solid transparent;padding:10px 6px;cursor:pointer}
+  .tabs button.on{color:var(--tx);border-bottom-color:var(--acc)}
+  .tabs button:not(.on):hover{color:var(--tx2)}
+  .pane{flex:1 1 auto;overflow:auto;padding:12px;display:none}
+  .pane.on{display:block}
+  .panehint{font-size:11px;color:var(--tx3);margin:0 0 10px;line-height:1.5}
+
+  /* capability rows */
+  .cap{display:flex;align-items:center;gap:9px;padding:7px 9px;border:1px solid var(--ln);border-radius:8px;margin-bottom:6px;background:var(--panel3)}
+  .cap .nm{flex:1;font-size:12.5px;font-weight:600;color:var(--tx)}
+  .cap .dt{font-size:11px;color:var(--tx3);text-align:right;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .st{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:6px;border:1px solid var(--pendbd);background:var(--pendbg);color:var(--pend);white-space:nowrap;flex:0 0 auto}
+  .st[data-s="detected"]{border-color:var(--okbd);background:var(--okbg);color:var(--ok)}
+  .st[data-s="not_detected"]{border-color:var(--ln);background:#141b24;color:var(--tx3)}
+  .st[data-s="not_readable"]{border-color:var(--warnbd);background:var(--warnbg);color:var(--warn)}
+  .st[data-s="error"]{border-color:var(--failbd);background:var(--failbg);color:var(--fail)}
+  .st[data-s="pending"]{border-color:var(--pendbd);background:var(--pendbg);color:var(--pend)}
+
+  .toolrow{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+  .field{width:100%;margin-bottom:8px}
+  .field label{display:block;font-size:11px;color:var(--tx3);font-weight:700;margin-bottom:4px;letter-spacing:.3px}
+  .field input{width:100%}
+  .count{font-size:11px;color:var(--tx3)}
+
+  /* discovery list */
+  #discList .row{display:flex;align-items:center;gap:8px;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
+  #discList .k{flex:1;color:var(--tx);word-break:break-all;font-family:ui-monospace,Menlo,Consolas,monospace}
+  #discList .ty{font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;border:1px solid var(--ln);color:var(--tx2);white-space:nowrap}
+  #discList .ty.fn{color:#c3b7ff;border-color:#4a3f8f}
+  #discList .ar{font-size:10px;color:var(--tx3);min-width:28px;text-align:right}
+
+  /* watchlist */
+  #watchList .row{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--ln);border-radius:7px;margin-bottom:5px;background:var(--panel3);font-size:12.5px}
+  #watchList .row .nm{flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--tx)}
+  #watchList .x{cursor:pointer;color:var(--tx3);font-weight:700;padding:0 4px}
+  #watchList .x:hover{color:var(--fail)}
+
+  /* skin editor */
+  #skinIds{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+  #skinIds .field{flex:1;min-width:150px;margin:0}
+  textarea{width:100%;background:var(--panel3);border:1px solid var(--ln);color:var(--tx);border-radius:8px;padding:9px;font-family:ui-monospace,Menlo,Consolas,"Roboto Mono",monospace;font-size:12px;line-height:1.5;resize:vertical;min-height:96px}
+  .skinlabel{font-size:11px;color:var(--tx3);font-weight:700;margin:8px 0 4px;letter-spacing:.3px;display:flex;align-items:center;gap:6px}
+  .portwarn{font-size:11px;color:#e9c877;background:var(--warnbg);border:1px solid var(--warnbd);border-radius:7px;padding:7px 9px;margin-top:8px;display:none;line-height:1.45}
+  .portwarn.show{display:block}
+
+  /* ---- Console -------------------------------------------------------- */
+  #con{flex:0 0 auto;height:180px;display:flex;flex-direction:column;background:var(--panel2);border-top:1px solid var(--ln)}
+  #con.collapsed{height:auto}
+  #con.collapsed .log,#con.collapsed .conmini{display:none}
+  .conhdr{display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--ln);background:var(--panel)}
+  .conhdr .t{font-size:12px;font-weight:800;letter-spacing:.4px;color:var(--tx2)}
+  .conhdr .c{font-size:11px;color:var(--tx3)}
+  .log{flex:1;overflow:auto;padding:8px 12px;font-family:ui-monospace,Menlo,Consolas,"Roboto Mono",monospace;font-size:12px;line-height:1.55}
+  .lrow{display:flex;gap:9px;padding:1px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+  .lrow .ts{color:var(--tx3);flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .lrow .lv{flex:0 0 auto;width:52px;font-weight:700;text-transform:uppercase;font-size:10.5px;letter-spacing:.5px;padding-top:1px}
+  .lrow .ms{color:var(--tx);white-space:pre-wrap;word-break:break-word}
+  .lrow.info .lv{color:var(--tx2)} .lrow.ok .lv{color:var(--ok)} .lrow.warn .lv{color:var(--warn)}
+  .lrow.error .lv{color:var(--fail)} .lrow.error .ms{color:#ffb4b0}
+  .conmini{font-size:11px;color:var(--tx3);padding:6px 14px;border-top:1px solid var(--ln);background:var(--panel)}
+
+  /* responsive: stack the dock under the stage on narrow screens */
+  @media (max-width:860px){
+    #main{flex-direction:column}
+    #dock{flex:0 0 auto;max-width:none;max-height:46vh;border-left:0;border-top:1px solid var(--ln)}
+    #pathCtl input{min-width:180px}
+    .sub{display:none}
+  }
+</style>
+</head>
+<body>
+
+  <header id="hdr">
+    <span class="brand"><span class="dot"></span>HTML APP SANDBOX</span>
+    <div class="sub">Laboratorio visual para <b>cualquier</b> app HTML de una página. No asume nada: <b>detecta</b>.</div>
+    <div class="spacer"></div>
+    <span class="mode-tag" id="modeTag">MODE: NON-INVASIVE</span>
+  </header>
+
+  <div id="profbar">
+    <span class="lbl">PROYECTO</span>
+    <select id="profSelect" title="Perfil de proyecto"></select>
+    <button class="btn sm ghost" id="pfNew">＋ Nuevo</button>
+    <button class="btn sm ghost" id="pfRename">✎ Renombrar</button>
+    <button class="btn sm ghost" id="pfDup">⧉ Duplicar</button>
+    <button class="btn sm danger" id="pfDel">🗑 Eliminar</button>
+    <div class="spacer"></div>
+    <button class="btn sm ghost" id="pfExport">⭳ Export JSON</button>
+    <button class="btn sm ghost" id="pfImport">⭱ Import JSON</button>
+    <input type="file" id="pfImportInput" accept="application/json,.json" style="display:none">
+  </div>
+
+  <div id="srcbar">
+    <div class="seg" role="group" aria-label="Modo de carga">
+      <button id="mFile" class="on" title="Elegir cualquier HTML desde tu computadora (revisión visual rápida)">📁 LOCAL FILE</button>
+      <button id="mPath" title="Ruta relativa o URL (prueba fiable de mismo origen)">🔗 RELATIVE PATH / URL</button>
+    </div>
+    <div id="localCtl">
+      <button class="btn file" id="pick">📂 Select HTML File</button>
+      <input type="file" id="fileInput" accept=".html,.htm,text/html" style="display:none">
+      <span class="fname" id="fname">Ningún archivo seleccionado</span>
+    </div>
+    <div id="pathCtl" style="display:none">
+      <span style="font-size:11px;color:var(--tx2)">ruta/URL:</span>
+      <input type="text" id="srcInput" class="mono" placeholder="p. ej. index.html · ./app/index.html · https://tuprueba.web.app/" spellcheck="false" autocomplete="off">
+      <button class="btn ghost" id="reload">↻ Cargar / Recargar</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn primary" id="recheck">⟳ Re-detectar</button>
+  </div>
+
+  <div id="warn">
+    <span>⚠</span>
+    <span><b>LOCAL FILE mode</b> — <span class="en">Local file mode may affect relative resources, authentication persistence, service workers, and browser storage.</span> Úsalo para revisión visual rápida. Para probar mismo origen, Firebase, sesión y rutas reales, usa <b>RELATIVE PATH / URL</b> con la app servida (servidor local o hosting).</span>
+  </div>
+
+  <div id="main">
+    <div id="stage">
+      <div id="stageEmpty">
+        <div class="big">Ningún app cargado</div>
+        <div class="sm">Elige un archivo con <b>Select HTML File</b>, o cambia a <b>RELATIVE PATH / URL</b> e ingresa una ruta o URL. El sandbox detectará automáticamente las capacidades de lo que cargues.</div>
+      </div>
+      <iframe id="frame" title="Loaded app (sandboxed)"></iframe>
+    </div>
+
+    <aside id="dock">
+      <div class="tabs">
+        <button data-tab="cap" class="on">Capacidades</button>
+        <button data-tab="disc">Descubrimiento</button>
+        <button data-tab="watch">Watchlist</button>
+        <button data-tab="skin">Skin</button>
+      </div>
+
+      <!-- Capabilities -->
+      <div class="pane on" data-pane="cap">
+        <p class="panehint">Detección automática. <b>Not detected</b> no es un error: solo significa que esa capacidad no está presente en el app cargado.</p>
+        <div id="capList"></div>
+      </div>
+
+      <!-- Discovery -->
+      <div class="pane" data-pane="disc">
+        <p class="panehint">Compara un <span class="mono">window</span> limpio contra el del app y muestra lo que el app expone: funciones (con su aridad), objetos y primitivos.</p>
+        <div class="toolrow">
+          <input type="text" id="discFilter" placeholder="Buscar / filtrar…" class="mono" style="flex:1;min-width:120px">
+          <select id="discType" style="flex:0 0 auto">
+            <option value="all">Todos</option>
+            <option value="function">Funciones</option>
+            <option value="object">Objetos</option>
+            <option value="primitive">Primitivos</option>
+          </select>
+        </div>
+        <div class="count" id="discCount">—</div>
+        <div id="discList" style="margin-top:6px"></div>
+      </div>
+
+      <!-- Watchlist -->
+      <div class="pane" data-pane="watch">
+        <p class="panehint">Nombres de funciones a vigilar. El sandbox <b>solo comprueba si existen</b> — nunca las ejecuta.</p>
+        <div class="toolrow">
+          <input type="text" id="watchInput" placeholder="p. ej. showTab, rndrCust" class="mono" style="flex:1;min-width:120px">
+          <button class="btn sm" id="watchAdd">＋ Agregar</button>
+        </div>
+        <div id="watchList"></div>
+      </div>
+
+      <!-- Skin -->
+      <div class="pane" data-pane="skin">
+        <p class="panehint">Bloques <b>portables</b>. Se inyectan en el DOM en memoria del iframe (nunca en el archivo). Deben poder pegarse tal cual al final del app.</p>
+        <div id="skinIds">
+          <div class="field"><label>STYLE id</label><input type="text" id="styleId" class="mono" value="sandboxSkinStyle"></div>
+          <div class="field"><label>SCRIPT id</label><input type="text" id="scriptId" class="mono" value="sandboxSkinScript"></div>
+        </div>
+        <div class="skinlabel">CSS &nbsp;<span class="count" id="styleLen">0 chars</span></div>
+        <textarea id="styleBody" placeholder="/* CSS del skin (vacío en Fase 1) */"></textarea>
+        <div class="skinlabel">JS &nbsp;<span class="count" id="scriptLen">0 chars</span></div>
+        <textarea id="scriptBody" placeholder="// JS del skin — solo document + globals del app. Sin parent/top/frameElement/postMessage."></textarea>
+        <div class="portwarn" id="portWarn"></div>
+        <div class="toolrow" style="margin-top:10px">
+          <button class="btn primary" id="inject" disabled>⬇ Inyectar skin</button>
+          <button class="btn ghost" id="remove" disabled>✕ Quitar skin</button>
+        </div>
+        <div class="toolrow">
+          <button class="btn" id="dl">⭳ Download Skin Blocks</button>
+          <button class="btn sm ghost" id="copyStyle">⧉ Copy Style</button>
+          <button class="btn sm ghost" id="copyScript">⧉ Copy Script</button>
+          <button class="btn sm ghost" id="copyBoth">⧉ Copy Both</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <section id="con">
+    <div class="conhdr">
+      <span class="t">CONSOLA DEL SANDBOX</span>
+      <span class="c" id="conCount">0 líneas</span>
+      <div class="spacer"></div>
+      <button class="btn sm ghost" id="conClear">Limpiar</button>
+      <button class="btn sm ghost" id="conToggle">Ocultar consola</button>
+    </div>
+    <div class="log" id="log"></div>
+    <div class="conmini">Modo <b>Non-invasive</b>: no se modifica console, fetch, XHR, Firebase ni datos; no hay observers ni wrappers. Los errores del app también salen en la consola real del navegador (F12). Aquí no se ocultan.</div>
+  </section>
+
+<script>
+"use strict";
+(function(){
+  var POLL_MS = 800, LS_KEY = "htmlAppSandbox.profiles.v1";
+
+  /* ---------- element refs ------------------------------------------------ */
+  var $ = function(id){ return document.getElementById(id); };
+  var frame=$("frame"), stageEmpty=$("stageEmpty");
+  var fileInput=$("fileInput"), fname=$("fname"), srcInput=$("srcInput");
+  var localCtl=$("localCtl"), pathCtl=$("pathCtl"), warn=$("warn"), mFile=$("mFile"), mPath=$("mPath");
+  var capList=$("capList"), discList=$("discList"), discCount=$("discCount"), discFilter=$("discFilter"), discType=$("discType");
+  var watchList=$("watchList"), watchInput=$("watchInput");
+  var styleId=$("styleId"), scriptId=$("scriptId"), styleBody=$("styleBody"), scriptBody=$("scriptBody");
+  var styleLen=$("styleLen"), scriptLen=$("scriptLen"), portWarn=$("portWarn");
+  var btnInject=$("inject"), btnRemove=$("remove");
+  var log=$("log"), conCount=$("conCount");
+  var profSelect=$("profSelect"), pfImportInput=$("pfImportInput");
+
+  /* ---------- state ------------------------------------------------------- */
+  var currentBlobUrl=null, currentSrcLabel="", frameLoaded=false;
+  var loadMode="file";                 // 'file' | 'path'
+  var baselineKeys=null;               // clean-window window keys, captured lazily
+  var discovered=[];                   // [{key,type,arity}]
+  var lastCapState={};                 // for transition logging
+
+  /* ---------- console ----------------------------------------------------- */
+  var lineCount=0;
+  function logLine(level,msg){
+    var n=new Date(), ts=("0"+n.getHours()).slice(-2)+":"+("0"+n.getMinutes()).slice(-2)+":"+("0"+n.getSeconds()).slice(-2);
+    var row=document.createElement("div"); row.className="lrow "+(level||"info");
+    var a=document.createElement("span"); a.className="ts"; a.textContent=ts;
+    var b=document.createElement("span"); b.className="lv"; b.textContent=level||"info";
+    var c=document.createElement("span"); c.className="ms"; c.textContent=msg;
+    row.appendChild(a);row.appendChild(b);row.appendChild(c); log.appendChild(row); log.scrollTop=log.scrollHeight;
+    lineCount++; conCount.textContent=lineCount+(lineCount===1?" línea":" líneas");
+    var fn=level==="error"?"error":(level==="warn"?"warn":"log"); try{ console[fn]("[sandbox] "+msg); }catch(_e){}
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+
+  /* ---------- surface (never hide) host errors ---------------------------- */
+  window.addEventListener("error",function(ev){
+    var where=ev.filename?(" @ "+ev.filename+":"+ev.lineno+":"+ev.colno):"";
+    logLine("error","JS error (host): "+(ev.message||(ev.error&&ev.error.message)||"desconocido")+where);
+  });
+  window.addEventListener("unhandledrejection",function(ev){
+    var r=ev.reason; logLine("error","Promesa rechazada (host): "+(r&&r.message?r.message:String(r)));
+  });
+
+  /* ---------- safe cross-frame access ------------------------------------- */
+  function safeWin(){ try{ return frame.contentWindow||null; }catch(_e){ return null; } }
+  var CROSS={cross:true};
+  function safeDoc(){ try{ var w=frame.contentWindow; if(!w) return null; var d=w.document; return d||null; }catch(_e){ return CROSS; } }
+  function readable(){ var d=safeDoc(); return d && d!==CROSS; }
+
+  /* ---------- capability engine ------------------------------------------- *
+   * Each probe returns {state, detail}. state in
+   *   detected | not_detected | not_readable | error | pending
+   * Probes ONLY read properties — no patching, no calls with side effects.
+   */
+  function safe(fn){ try{ return fn(); }catch(_e){ return undefined; } }
+
+  var PROBES = [
+    { key:"Firebase (compat)", fn:function(w){
+        var fb=safe(function(){return w.firebase;});
+        if(!fb) return {state:"not_detected"};
+        var v=safe(function(){return fb.SDK_VERSION;});
+        var apps=safe(function(){return fb.apps&&fb.apps.length;});
+        return {state:"detected", detail:(v?("v"+v):"compat")+(apps?(" · "+apps+" app"+(apps>1?"s":"")):" · 0 apps")};
+      }},
+    { key:"Firebase Auth", fn:function(w){
+        var ok=safe(function(){return w.firebase&&typeof w.firebase.auth==="function";});
+        if(!ok) return {state:"not_detected"};
+        var cu=safe(function(){return w.firebase.auth().currentUser;});
+        return {state:"detected", detail: cu?("signed in · "+String(cu.uid).slice(0,8)+"…"):"no session"};
+      }},
+    { key:"Firestore", fn:function(w){
+        var ok=safe(function(){return w.firebase&&typeof w.firebase.firestore==="function";});
+        return ok?{state:"detected"}:{state:"not_detected"};
+      }},
+    { key:"Firebase (modular)", fn:function(w){
+        // Heuristic: modular SDK doesn't expose a global; look for common markers.
+        var m=safe(function(){return w.__FIREBASE_DEFAULTS__||w.firebaseConfig||(w.__firebase_modular__);});
+        return m?{state:"detected", detail:"markers found"}:{state:"not_detected"};
+      }},
+    { key:"Supabase", fn:function(w){
+        var s=safe(function(){return w.supabase||w.createClient||(w.Supabase);});
+        return s?{state:"detected"}:{state:"not_detected"};
+      }},
+    { key:"React", fn:function(w,d){
+        var r=safe(function(){return w.React|| (d&&d.querySelector("[data-reactroot],[data-reactid]")) || w.__REACT_DEVTOOLS_GLOBAL_HOOK__;});
+        return r?{state:"detected", detail: safe(function(){return w.React&&w.React.version;})||""}:{state:"not_detected"};
+      }},
+    { key:"Vue", fn:function(w,d){
+        var v=safe(function(){return w.Vue|| (d&&d.querySelector("[data-v-app],[data-server-rendered]")) || w.__VUE__;});
+        return v?{state:"detected", detail: safe(function(){return w.Vue&&w.Vue.version;})||""}:{state:"not_detected"};
+      }},
+    { key:"Angular", fn:function(w,d){
+        var a=safe(function(){return w.ng|| w.angular || (d&&d.querySelector("[ng-version],[ng-app]"));});
+        return a?{state:"detected", detail: safe(function(){var e=d&&d.querySelector("[ng-version]");return e&&e.getAttribute("ng-version");})||""}:{state:"not_detected"};
+      }},
+    { key:"jQuery", fn:function(w){
+        var j=safe(function(){return w.jQuery||(w.$&&w.$.fn&&w.$.fn.jquery);});
+        return j?{state:"detected", detail: safe(function(){return w.jQuery&&w.jQuery.fn&&w.jQuery.fn.jquery;})||""}:{state:"not_detected"};
+      }},
+    { key:"Service Worker", fn:function(w){
+        var supported=safe(function(){return "serviceWorker" in w.navigator;});
+        if(!supported) return {state:"not_detected", detail:"API n/d"};
+        var reg=safe(function(){return w.navigator.serviceWorker.controller;});
+        return {state:"detected", detail: reg?"controlled":"API present"};
+      }},
+    { key:"localStorage", fn:function(w){
+        var n=safe(function(){return w.localStorage.length;});
+        return (typeof n==="number")?{state:"detected", detail:n+" keys"}:{state:"not_detected"};
+      }},
+    { key:"sessionStorage", fn:function(w){
+        var n=safe(function(){return w.sessionStorage.length;});
+        return (typeof n==="number")?{state:"detected", detail:n+" keys"}:{state:"not_detected"};
+      }},
+    { key:"Cookies", fn:function(w,d){
+        var c=safe(function(){return d.cookie;});
+        if(typeof c!=="string") return {state:"not_detected"};
+        var num=c?c.split(";").filter(function(x){return x.trim();}).length:0;
+        return {state:"detected", detail:num+" cookie"+(num!==1?"s":"")};
+      }}
+  ];
+
+  function renderCaps(){
+    capList.innerHTML="";
+    var d=safeDoc();
+    PROBES.forEach(function(p){
+      var res;
+      if(d===CROSS) res={state:"not_readable", detail:"cross-origin"};
+      else if(!frameLoaded||!d) res={state:"pending"};
+      else { try{ res=p.fn(safeWin(), d)||{state:"not_detected"}; }catch(_e){ res={state:"error", detail:_e&&_e.message}; } }
+      var row=document.createElement("div"); row.className="cap";
+      row.innerHTML='<span class="nm">'+escapeHtml(p.key)+'</span>'+
+                    (res.detail?'<span class="dt">'+escapeHtml(res.detail)+'</span>':'')+
+                    '<span class="st" data-s="'+res.state+'">'+res.state.replace("_"," ")+'</span>';
+      capList.appendChild(row);
+      if(lastCapState[p.key]!==res.state){
+        lastCapState[p.key]=res.state;
+        if(res.state==="detected") logLine("ok","Capacidad: "+p.key+" → detected"+(res.detail?(" ("+res.detail+")"):""));
+        else if(res.state==="error") logLine("error","Capacidad: "+p.key+" → error");
+      }
+    });
+  }
+
+  /* ---------- global discovery (clean-window diff) ------------------------ */
+  function captureBaseline(cb){
+    if(baselineKeys){ cb(); return; }
+    // Load a blank same-origin doc in a hidden iframe to snapshot a clean window.
+    var f=document.createElement("iframe");
+    f.style.display="none"; f.setAttribute("aria-hidden","true");
+    f.src="about:blank";
+    f.addEventListener("load",function(){
+      try{
+        var keys={}; var w=f.contentWindow;
+        for(var k in w){ keys[k]=true; }
+        baselineKeys=keys; logLine("info","Baseline de window capturado ("+Object.keys(keys).length+" claves) para el diff de descubrimiento.");
+      }catch(e){ baselineKeys={}; logLine("warn","No se pudo capturar el baseline limpio: "+(e&&e.message||e)); }
+      f.remove(); cb();
+    });
+    document.body.appendChild(f);
+  }
+  function runDiscovery(){
+    var d=safeDoc();
+    if(d===CROSS){ discovered=[]; discCount.textContent="No legible (cross-origin)"; discList.innerHTML=""; return; }
+    if(!frameLoaded||!d){ discovered=[]; discCount.textContent="—"; discList.innerHTML=""; return; }
+    captureBaseline(function(){
+      var w=safeWin(); var out=[];
+      try{
+        for(var k in w){
+          if(baselineKeys[k]) continue;               // skip built-ins present in a clean window
+          var val, type, arity="";
+          try{ val=w[k]; }catch(_e){ continue; }        // some props throw on access
+          var t=typeof val;
+          if(t==="function"){ type="function"; arity=String(val.length); }
+          else if(t==="object"&&val!==null){ type="object"; }
+          else { type="primitive"; }
+          out.push({key:k, type:type, arity:arity});
+        }
+      }catch(e){ logLine("warn","Descubrimiento incompleto: "+(e&&e.message||e)); }
+      out.sort(function(a,b){ if(a.type!==b.type){ return a.type==="function"?-1:(b.type==="function"?1:a.type.localeCompare(b.type)); } return a.key.localeCompare(b.key); });
+      discovered=out; renderDiscovery();
+      logLine("ok","Descubrimiento: "+out.length+" globals expuestos por el app ("+out.filter(function(x){return x.type==="function";}).length+" funciones).");
+    });
+  }
+  function renderDiscovery(){
+    var q=(discFilter.value||"").toLowerCase(), ty=discType.value;
+    var rows=discovered.filter(function(r){ return (ty==="all"||r.type===ty) && (!q||r.key.toLowerCase().indexOf(q)>=0); });
+    discCount.textContent=rows.length+" de "+discovered.length;
+    discList.innerHTML= rows.length? rows.map(function(r){
+      return '<div class="row"><span class="k">'+escapeHtml(r.key)+'</span>'+
+             '<span class="ty '+(r.type==="function"?"fn":"")+'">'+r.type+'</span>'+
+             '<span class="ar">'+(r.type==="function"?("fn/"+r.arity):"")+'</span></div>';
+    }).join("") : '<div class="panehint" style="margin:8px 0 0">Sin resultados. Carga un app y pulsa Re-detectar, o ajusta el filtro.</div>';
+  }
+
+  /* ---------- watchlist ---------------------------------------------------- */
+  var watch=[];   // array of names
+  function renderWatch(){
+    var w=safeWin(), d=safeDoc(), can=(d&&d!==CROSS);
+    watchList.innerHTML = watch.length? "" : '<div class="panehint" style="margin:6px 0 0">Vacío. Agrega nombres de funciones a vigilar.</div>';
+    watch.forEach(function(name,i){
+      var st, detail;
+      if(d===CROSS){ st="not_readable"; detail="cross-origin"; }
+      else if(!can){ st="pending"; detail=""; }
+      else { var t=safe(function(){return typeof w[name];}); if(t==="function"){ st="detected"; detail="fn/"+safe(function(){return w[name].length;}); } else if(t!=="undefined"){ st="not_detected"; detail=t; } else { st="not_detected"; detail=""; } }
+      var row=document.createElement("div"); row.className="row";
+      row.innerHTML='<span class="nm">'+escapeHtml(name)+'</span>'+
+                    (detail?'<span class="count">'+escapeHtml(detail)+'</span>':'')+
+                    '<span class="st" data-s="'+st+'">'+st.replace("_"," ")+'</span>'+
+                    '<span class="x" data-i="'+i+'" title="Quitar">✕</span>';
+      watchList.appendChild(row);
+    });
+    Array.prototype.forEach.call(watchList.querySelectorAll(".x"),function(x){
+      x.addEventListener("click",function(){ watch.splice(parseInt(x.getAttribute("data-i"),10),1); renderWatch(); saveActive(); });
+    });
+  }
+  function addWatch(){
+    var raw=(watchInput.value||"").split(/[\s,]+/).map(function(s){return s.trim();}).filter(Boolean);
+    raw.forEach(function(n){ if(watch.indexOf(n)<0) watch.push(n); });
+    watchInput.value=""; renderWatch(); saveActive();
+  }
+
+  /* ---------- skin injector (portable) ------------------------------------ */
+  var FORBIDDEN=[/\bparent\b/,/\btop\b/,/\bframeElement\b/,/\bpostMessage\b/];
+  function checkPortability(){
+    var js=scriptBody.value||"", hits=[];
+    FORBIDDEN.forEach(function(re){ if(re.test(js)){ hits.push(re.source.replace(/\\b/g,"")); } });
+    if(hits.length){ portWarn.textContent="⚠ El skin NO es portable: usa "+hits.join(", ")+". Debe referenciar solo document + globals del app (sin parent/top/frameElement/postMessage) para poder pegarse tal cual al final del app."; portWarn.classList.add("show"); }
+    else portWarn.classList.remove("show");
+    return hits.length===0;
+  }
+  function currentIds(){ return { s:(styleId.value||"sandboxSkinStyle").trim(), j:(scriptId.value||"sandboxSkinScript").trim() }; }
+  function injectSkin(){
+    var d=docOrWarn(); if(!d) return;
+    checkPortability();
+    var ids=currentIds();
+    try{
+      var host=d.body||d.documentElement;
+      var st=d.getElementById(ids.s);
+      if(!st){ st=d.createElement("style"); st.id=ids.s; host.appendChild(st); }
+      st.textContent=styleBody.value||"";
+      var scOld=d.getElementById(ids.j); if(scOld) scOld.remove();
+      var sc=d.createElement("script"); sc.id=ids.j; sc.textContent=scriptBody.value||""; host.appendChild(sc);
+      var okS=!!d.getElementById(ids.s), okJ=!!d.getElementById(ids.j);
+      logLine(okS&&okJ?"ok":"error","Skin inyectado → style#"+ids.s+": "+(okS?"✓":"✗")+" · script#"+ids.j+": "+(okJ?"✓":"✗")+". Añadido al final del <body> del iframe (misma posición que al final del app). Solo DOM en memoria; el archivo no se toca.");
+    }catch(e){ logLine("error","Inyección falló: "+(e&&e.message||e)); }
+  }
+  function removeSkin(){
+    var d=docOrWarn(); if(!d) return;
+    var ids=currentIds();
+    try{
+      var st=d.getElementById(ids.s); if(st) st.remove();
+      var sc=d.getElementById(ids.j); if(sc) sc.remove();
+      logLine("info","Skin removido del iframe (style#"+ids.s+", script#"+ids.j+").");
+    }catch(e){ logLine("error","Quitar skin falló: "+(e&&e.message||e)); }
+  }
+  function blocksText(){
+    var ids=currentIds();
+    return '<style id="'+ids.s+'">\n'+(styleBody.value||"")+'\n<\/style>\n\n'+
+           '<script id="'+ids.j+'">\n'+(scriptBody.value||"")+'\n<\/script>\n';
+  }
+  function downloadBlocks(){
+    var blob=new Blob([blocksText()],{type:"text/plain;charset=utf-8"});
+    var url=URL.createObjectURL(blob); var a=document.createElement("a");
+    a.href=url; a.download=(currentIds().j||"skin")+"-blocks.txt";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(_e){} },1500);
+    logLine("ok","Descargado \""+a.download+"\" — solo los 2 bloques portables, sin el host del sandbox.");
+  }
+  function copyText(txt,label){
+    var done=function(){ logLine("ok",label+" copiado al portapapeles."); };
+    var fail=function(){ logLine("warn","No se pudo copiar automáticamente "+label+"; cópialo del editor manualmente."); };
+    try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done,fail); return; } }catch(_e){}
+    try{ var ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); }catch(_e){ fail(); }
+  }
+  function styleBlockText(){ var ids=currentIds(); return '<style id="'+ids.s+'">\n'+(styleBody.value||"")+'\n<\/style>\n'; }
+  function scriptBlockText(){ var ids=currentIds(); return '<script id="'+ids.j+'">\n'+(scriptBody.value||"")+'\n<\/script>\n'; }
+
+  function docOrWarn(){
+    var d=safeDoc();
+    if(d===CROSS){ logLine("error","No puedo acceder al iframe (cross-origin). Sírvelo desde el mismo origen (servidor/hosting) o usa Firefox por file://."); return null; }
+    if(!d){ logLine("error","No hay app cargado todavía."); return null; }
+    return d;
+  }
+
+  /* ---------- iframe loading (blob / path) -------------------------------- */
+  function revokeBlob(){ if(currentBlobUrl){ try{ URL.revokeObjectURL(currentBlobUrl); }catch(_e){} currentBlobUrl=null; } }
+  function loadIframe(url,label){
+    frameLoaded=false; lastCapState={}; discovered=[]; discList.innerHTML=""; discCount.textContent="—";
+    currentSrcLabel=label||url; stageEmpty.style.display="none";
+    logLine("info","Cargando app: "+currentSrcLabel);
+    frame.src=url;
+  }
+  function loadFromFile(file){
+    revokeBlob(); currentBlobUrl=URL.createObjectURL(file);
+    fname.innerHTML='Cargado: <b>'+escapeHtml(file.name)+'</b>';
+    logLine("info","Archivo local: "+file.name+" ("+Math.round(file.size/1024)+" KB). Modo blob — recursos relativos, sesión, service worker y storage pueden no comportarse; usa RELATIVE PATH / URL para la prueba fiable.");
+    loadIframe(currentBlobUrl, file.name+" · local (blob:)");
+  }
+  function loadFromPath(){
+    revokeBlob();
+    var p=(srcInput.value||"").trim();
+    if(!p){ logLine("warn","Escribe una ruta/URL (o cambia a LOCAL FILE)."); return; }
+    loadIframe(p,p);
+  }
+  frame.addEventListener("load",function(){
+    if(!frame.getAttribute("src")) return;
+    frameLoaded=true;
+    logLine("info","Evento \"load\" recibido: "+currentSrcLabel);
+    var d=safeDoc();
+    if(d===CROSS) logLine("warn","El app cargó pero es CROSS-ORIGIN: el sandbox no puede inspeccionar su DOM ni inyectar skins. Para inspección completa, sírvelo desde el mismo origen que este sandbox.");
+    runAll();
+  });
+  frame.addEventListener("error",function(){ logLine("error","El iframe reportó un error al cargar: "+currentSrcLabel); });
+
+  function runAll(){ renderCaps(); runDiscovery(); renderWatch(); refreshInjectButtons(); }
+  function refreshInjectButtons(){ var can=readable(); btnInject.disabled=!can; btnRemove.disabled=!can; }
+
+  /* ---------- mode switching ---------------------------------------------- */
+  function setMode(mode){
+    loadMode=mode; var isFile=(mode==="file");
+    mFile.classList.toggle("on",isFile); mPath.classList.toggle("on",!isFile);
+    localCtl.style.display=isFile?"flex":"none"; pathCtl.style.display=isFile?"none":"flex";
+    warn.classList.toggle("show",isFile);
+    logLine("info","Modo de carga: "+(isFile?"LOCAL FILE — revisión visual rápida.":"RELATIVE PATH / URL — prueba fiable de mismo origen."));
+  }
+
+  /* ---------- profiles (localStorage) ------------------------------------- *
+   * Stored: name, srcPath, loadMode, watchlist, styleId, scriptId, styleBody,
+   * scriptBody, navHooks, viewport, selectors, inspectionCfg.
+   * NEVER stored: passwords, PINs, tokens, credentials, or app data.
+   */
+  var store={ profiles:[], activeId:null };
+  function uid(){ return "p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  function blankProfile(name){
+    return { id:uid(), name:name||"Nuevo proyecto", srcPath:"", loadMode:"file",
+             watchlist:[], styleId:"sandboxSkinStyle", scriptId:"sandboxSkinScript",
+             styleBody:"", scriptBody:"", navHooks:[], viewport:"desktop", selectors:[], inspectionCfg:{} };
+  }
+  function loadStore(){
+    try{ var raw=localStorage.getItem(LS_KEY); if(raw){ store=JSON.parse(raw); } }catch(e){ logLine("warn","No se pudo leer perfiles de localStorage: "+(e&&e.message||e)); }
+    if(!store||!Array.isArray(store.profiles)) store={profiles:[],activeId:null};
+    if(!store.profiles.length){ var p=blankProfile("Default"); store.profiles.push(p); store.activeId=p.id; persist(); }
+    if(!store.activeId||!byId(store.activeId)) store.activeId=store.profiles[0].id;
+  }
+  function persist(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(store)); }catch(e){ logLine("warn","No se pudo guardar en localStorage: "+(e&&e.message||e)); } }
+  function byId(id){ for(var i=0;i<store.profiles.length;i++){ if(store.profiles[i].id===id) return store.profiles[i]; } return null; }
+  function active(){ return byId(store.activeId); }
+
+  function renderProfileSelect(){
+    profSelect.innerHTML=store.profiles.map(function(p){ return '<option value="'+p.id+'"'+(p.id===store.activeId?" selected":"")+'>'+escapeHtml(p.name)+'</option>'; }).join("");
+  }
+  function applyProfile(p){
+    // Fill UI from profile (does not auto-load the app).
+    srcInput.value=p.srcPath||""; setMode(p.loadMode||"file");
+    watch=(p.watchlist||[]).slice(); renderWatch();
+    styleId.value=p.styleId||"sandboxSkinStyle"; scriptId.value=p.scriptId||"sandboxSkinScript";
+    styleBody.value=p.styleBody||""; scriptBody.value=p.scriptBody||""; updateLens(); checkPortability();
+    logLine("info","Perfil activo: \""+p.name+"\".");
+  }
+  function saveActive(){
+    var p=active(); if(!p) return;
+    p.srcPath=srcInput.value||""; p.loadMode=loadMode; p.watchlist=watch.slice();
+    p.styleId=styleId.value||"sandboxSkinStyle"; p.scriptId=scriptId.value||"sandboxSkinScript";
+    p.styleBody=styleBody.value||""; p.scriptBody=scriptBody.value||"";
+    persist();
+  }
+  function switchProfile(id){ saveActive(); store.activeId=id; persist(); applyProfile(active()); renderProfileSelect(); }
+
+  function newProfile(){
+    var name=prompt("Nombre del nuevo proyecto:","Nuevo proyecto"); if(name===null) return;
+    var p=blankProfile(name.trim()||"Nuevo proyecto"); saveActive(); store.profiles.push(p); store.activeId=p.id; persist(); renderProfileSelect(); applyProfile(p); logLine("ok","Perfil creado: \""+p.name+"\".");
+  }
+  function renameProfile(){
+    var p=active(); if(!p) return; var name=prompt("Renombrar proyecto:",p.name); if(name===null) return;
+    p.name=name.trim()||p.name; persist(); renderProfileSelect(); logLine("ok","Perfil renombrado.");
+  }
+  function duplicateProfile(){
+    var p=active(); if(!p) return; saveActive();
+    var copy=JSON.parse(JSON.stringify(p)); copy.id=uid(); copy.name=p.name+" (copia)";
+    store.profiles.push(copy); store.activeId=copy.id; persist(); renderProfileSelect(); applyProfile(copy); logLine("ok","Perfil duplicado: \""+copy.name+"\".");
+  }
+  function deleteProfile(){
+    var p=active(); if(!p) return;
+    if(store.profiles.length<=1){ logLine("warn","No se puede eliminar el único perfil. Crea otro primero."); return; }
+    if(!confirm("¿Eliminar el perfil \""+p.name+"\"? Esta acción no se puede deshacer.")) return;
+    store.profiles=store.profiles.filter(function(x){return x.id!==p.id;}); store.activeId=store.profiles[0].id;
+    persist(); renderProfileSelect(); applyProfile(active()); logLine("ok","Perfil eliminado.");
+  }
+  function exportProfile(){
+    var p=active(); if(!p) return; saveActive();
+    var blob=new Blob([JSON.stringify(active(),null,2)],{type:"application/json"});
+    var url=URL.createObjectURL(blob); var a=document.createElement("a");
+    a.href=url; a.download="sandbox-profile-"+(p.name.replace(/[^a-z0-9\-_]+/gi,"_")||"profile")+".json";
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ try{URL.revokeObjectURL(url);}catch(_e){} },1500);
+    logLine("ok","Perfil exportado: "+a.download);
+  }
+  function importProfile(file){
+    var r=new FileReader();
+    r.onload=function(){
+      try{
+        var obj=JSON.parse(r.result);
+        if(!obj||typeof obj!=="object") throw new Error("JSON inválido");
+        // strip anything that isn't part of our known shape (defensive)
+        var clean=blankProfile(obj.name||"Perfil importado");
+        ["srcPath","loadMode","watchlist","styleId","scriptId","styleBody","scriptBody","navHooks","viewport","selectors","inspectionCfg"].forEach(function(k){ if(k in obj) clean[k]=obj[k]; });
+        clean.id=uid();
+        store.profiles.push(clean); store.activeId=clean.id; persist(); renderProfileSelect(); applyProfile(clean);
+        logLine("ok","Perfil importado: \""+clean.name+"\".");
+      }catch(e){ logLine("error","Import JSON falló: "+(e&&e.message||e)); }
+    };
+    r.readAsText(file);
+  }
+
+  /* ---------- small UI helpers -------------------------------------------- */
+  function updateLens(){ styleLen.textContent=(styleBody.value||"").length+" chars"; scriptLen.textContent=(scriptBody.value||"").length+" chars"; }
+
+  /* ---------- wire everything --------------------------------------------- */
+  // tabs
+  Array.prototype.forEach.call(document.querySelectorAll(".tabs button"),function(t){
+    t.addEventListener("click",function(){
+      Array.prototype.forEach.call(document.querySelectorAll(".tabs button"),function(x){ x.classList.toggle("on",x===t); });
+      var tab=t.getAttribute("data-tab");
+      Array.prototype.forEach.call(document.querySelectorAll(".pane"),function(p){ p.classList.toggle("on",p.getAttribute("data-pane")===tab); });
+    });
+  });
+  // source + modes
+  mFile.addEventListener("click",function(){ setMode("file"); saveActive(); });
+  mPath.addEventListener("click",function(){ setMode("path"); saveActive(); });
+  $("pick").addEventListener("click",function(){ fileInput.click(); });
+  fileInput.addEventListener("change",function(){ var f=fileInput.files&&fileInput.files[0]; if(f) loadFromFile(f); });
+  $("reload").addEventListener("click",function(){ loadFromPath(); saveActive(); });
+  srcInput.addEventListener("keydown",function(e){ if(e.key==="Enter"){ loadFromPath(); saveActive(); } });
+  $("recheck").addEventListener("click",function(){ logLine("info","Re-detección manual…"); runAll(); });
+  // discovery
+  discFilter.addEventListener("input",renderDiscovery); discType.addEventListener("change",renderDiscovery);
+  // watchlist
+  $("watchAdd").addEventListener("click",addWatch);
+  watchInput.addEventListener("keydown",function(e){ if(e.key==="Enter") addWatch(); });
+  // skin
+  styleBody.addEventListener("input",function(){ updateLens(); saveActive(); });
+  scriptBody.addEventListener("input",function(){ updateLens(); checkPortability(); saveActive(); });
+  styleId.addEventListener("input",saveActive); scriptId.addEventListener("input",saveActive);
+  btnInject.addEventListener("click",injectSkin);
+  btnRemove.addEventListener("click",removeSkin);
+  $("dl").addEventListener("click",downloadBlocks);
+  $("copyStyle").addEventListener("click",function(){ copyText(styleBlockText(),"Bloque STYLE"); });
+  $("copyScript").addEventListener("click",function(){ copyText(scriptBlockText(),"Bloque SCRIPT"); });
+  $("copyBoth").addEventListener("click",function(){ copyText(blocksText(),"Ambos bloques"); });
+  // profiles
+  profSelect.addEventListener("change",function(){ switchProfile(profSelect.value); });
+  $("pfNew").addEventListener("click",newProfile);
+  $("pfRename").addEventListener("click",renameProfile);
+  $("pfDup").addEventListener("click",duplicateProfile);
+  $("pfDel").addEventListener("click",deleteProfile);
+  $("pfExport").addEventListener("click",exportProfile);
+  $("pfImport").addEventListener("click",function(){ pfImportInput.click(); });
+  pfImportInput.addEventListener("change",function(){ var f=pfImportInput.files&&pfImportInput.files[0]; if(f) importProfile(f); pfImportInput.value=""; });
+  // console
+  $("conClear").addEventListener("click",function(){ log.innerHTML=""; lineCount=0; conCount.textContent="0 líneas"; });
+  var con=$("con"), tgl=$("conToggle");
+  tgl.addEventListener("click",function(){ con.classList.toggle("collapsed"); tgl.textContent=con.classList.contains("collapsed")?"Mostrar consola":"Ocultar consola"; });
+  window.addEventListener("beforeunload",function(){ saveActive(); revokeBlob(); });
+
+  /* ---------- boot -------------------------------------------------------- */
+  logLine("info","HTML App Sandbox listo (Fase 1, modo NON-INVASIVE). No modifica console/fetch/XHR/Firebase/datos; sin observers ni wrappers. No asume Aspen, Customer ni ninguna función específica.");
+  loadStore(); renderProfileSelect(); applyProfile(active());
+  updateLens();
+  logLine("info","Elige un HTML con \"Select HTML File\", o cambia a RELATIVE PATH / URL. Las capacidades se detectan solas al cargar.");
+  setInterval(function(){ if(frame.getAttribute("src")) runAll(); },POLL_MS);   // passive polling only
+})();
+</script>
+</body>
+</html>
