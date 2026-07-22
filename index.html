@@ -175,6 +175,13 @@
   .qa-sum{font-size:11px;color:var(--tx2);margin:6px 0}
   .mode-tag.qa{border-color:var(--failbd);background:var(--failbg);color:var(--fail)}
 
+  /* QA capture overlay (shows the app's pop-ups/PDFs inside the sandbox) */
+  #qaCapOverlay{display:none;position:fixed;inset:5% 5% 5% 5%;z-index:9999;background:#0b0f14;border:1px solid var(--acc);border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.6);flex-direction:column;overflow:hidden}
+  #qaCapOverlay.show{display:flex}
+  .qa-cap-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--ln)}
+  .qa-cap-title{font-size:12.5px;font-weight:800;color:var(--tx)}
+  #qaCapFrame{flex:1 1 auto;width:100%;border:0;background:#fff}
+
   /* ---- Console -------------------------------------------------------- */
   #con{flex:0 0 auto;height:180px;display:flex;flex-direction:column;background:var(--panel2);border-top:1px solid var(--ln)}
   #con.collapsed{height:auto}
@@ -262,6 +269,8 @@
         <button data-tab="watch">Watchlist</button>
         <button data-tab="skin">Skin</button>
         <button data-tab="qa">QA</button>
+        <button data-tab="health">🩺 Salud</button>
+        <button data-tab="kit">🔧 Kit</button>
       </div>
 
       <!-- Capabilities -->
@@ -371,6 +380,139 @@
             <div id="qaResults" style="max-height:210px;overflow:auto"></div>
           </div>
           <p class="panehint" style="margin-top:8px">Chequeos genéricos: scroll horizontal, elementos fuera del viewport y contenido cortado. Son <b>señales</b> y pueden dar falsos positivos; afinamos la sensibilidad con lo que veas. Empieza con una muestra antes de correr Todos.</p>
+
+          <div style="border-top:1px solid var(--ln);margin:12px 0 0;padding-top:12px">
+            <div class="skinlabel">CAPTURA DE POP-UPS / PDFs</div>
+            <label style="font-size:12px;color:var(--tx2);display:flex;align-items:center;gap:7px"><input type="checkbox" id="qaCapture"> Mostrar dentro del sandbox las ventanas nuevas del app (PDFs, reportes que abren en pestaña)</label>
+            <p class="panehint" style="margin-top:6px">Intercepta <span class="mono">window.open</span> del app (invasivo — actívalo en QA mode) para que el PDF/reporte se vea aquí y no se abra en pestaña ni lo bloquee el navegador. Necesita datos reales: usa <b>RELATIVE PATH</b> y un cliente <b>con reporte</b>.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Salud / Health checks -->
+      <div class="pane" data-pane="health">
+        <div style="font-size:12px;line-height:1.5;color:var(--muted,#7a8b99);margin-bottom:10px">
+          Chequeos de salud del app cargado. <b>No invasivo</b>: solo observa y lee. Pensado para cazar los problemas que dan más dolor (bucles, versión vieja, botones muertos).
+        </div>
+
+        <!-- 1. build stamp -->
+        <div class="hz-card">
+          <div class="hz-h">🏷️ Versión cargada</div>
+          <div class="hz-b" id="hzBuild">Carga un app y pulsa Escanear.</div>
+        </div>
+
+        <!-- 2. version compare -->
+        <div class="hz-card">
+          <div class="hz-h">🔁 ¿Estoy viendo lo último?</div>
+          <div class="hz-b" id="hzCmp">—</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <input type="text" id="hzExpBuild" class="mono" placeholder="build esperado (opcional)" style="flex:1;min-width:130px;font-size:11px">
+          </div>
+          <div class="panehint" style="margin-top:5px">Pega el build que esperas (ej. <span class="mono">2026-07-21N-wo</span>). Si no coincide, es caché o deploy pendiente — no un bug.</div>
+        </div>
+
+        <!-- 3. render loop detector -->
+        <div class="hz-card">
+          <div class="hz-h">♾️ Detector de bucles de render</div>
+          <div class="hz-b" id="hzLoop">Sin medir.</div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn sm" id="hzLoopBtn">▶ Medir 3s</button>
+            <button class="btn sm ghost" id="hzLoopStop" disabled>■ Detener</button>
+          </div>
+          <div class="panehint" style="margin-top:5px">Cuenta cuántas veces el app reescribe el DOM. Normal: pocas. Si sube sin parar → bucle infinito.</div>
+        </div>
+
+        <!-- 4. test all buttons -->
+        <div class="hz-card">
+          <div class="hz-h">🖱️ Probar todos los botones</div>
+          <div class="hz-b" id="hzBtns">Sin probar.</div>
+          <div style="margin-top:6px"><button class="btn sm" id="hzBtnScan">⟳ Escanear botones</button></div>
+          <div class="panehint" style="margin-top:5px">Lista los botones visibles y marca los que no tienen ningún manejador de click (candidatos a estar muertos). No los pulsa: solo inspecciona.</div>
+        </div>
+
+        <!-- 5. errors panel -->
+        <div class="hz-card">
+          <div class="hz-h">🚨 Errores del app <span class="count" id="hzErrN">0</span></div>
+          <div class="hz-b" id="hzErr" style="max-height:160px;overflow:auto">Sin errores capturados.</div>
+          <div style="margin-top:6px"><button class="btn sm ghost" id="hzErrClear">Limpiar</button></div>
+          <div class="panehint" style="margin-top:5px">Agrupa los <span class="mono">console.error</span> y errores del app cargado, arriba y grandes, para no perderlos entre el ruido.</div>
+        </div>
+
+        <!-- 6. deploy checklist -->
+        <div class="hz-card">
+          <div class="hz-h">🚀 Checklist de despliegue</div>
+          <div class="hz-b" id="hzDeploy"></div>
+        </div>
+      </div>
+
+      <!-- Kit / herramientas extra -->
+      <div class="pane" data-pane="kit">
+        <div style="font-size:12px;line-height:1.5;color:var(--muted,#7a8b99);margin-bottom:10px">
+          Caja de herramientas: comparar versiones, medir rendimiento, revisar móvil, y armar un reporte para pegarle a Claude. Todo <b>no invasivo</b> salvo donde se avise.
+        </div>
+
+        <!-- 1. snapshot / comparar -->
+        <div class="hz-card">
+          <div class="hz-h">📸 Snapshot &amp; comparar</div>
+          <div class="hz-b" id="ktSnap">Toma una foto del estado actual; carga otra versión y compara qué cambió.</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <button class="btn sm" id="ktSnapTake">📸 Tomar snapshot</button>
+            <button class="btn sm ghost" id="ktSnapCmp" disabled>⚖ Comparar con ahora</button>
+            <button class="btn sm ghost" id="ktSnapClear" disabled>✕</button>
+          </div>
+          <div class="panehint" style="margin-top:5px">Guarda build, capacidades, nº de globals y de filas. Ideal para saber si dos archivos son iguales o distintos.</div>
+        </div>
+
+        <!-- 2. rendimiento -->
+        <div class="hz-card">
+          <div class="hz-h">⏱️ Rendimiento</div>
+          <div class="hz-b" id="ktPerf">Sin medir.</div>
+          <div style="margin-top:6px"><button class="btn sm" id="ktPerfBtn">⟳ Medir</button></div>
+          <div class="panehint" style="margin-top:5px">Peso del DOM, nodos, scripts, imágenes y memoria (si el navegador la expone). Útil para un single-file grande.</div>
+        </div>
+
+        <!-- 3. móvil / accesibilidad -->
+        <div class="hz-card">
+          <div class="hz-h">📱 Móvil &amp; toque</div>
+          <div class="hz-b" id="ktMobile">Sin revisar.</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <button class="btn sm" id="ktMobileBtn">⟳ Revisar</button>
+            <button class="btn sm ghost" id="ktMobileToggle">📱 Vista móvil</button>
+          </div>
+          <div class="panehint" style="margin-top:5px">Marca botones/enlaces más chicos que 44px (difíciles con el dedo) y textos diminutos. La vista móvil encoge el iframe a 390px.</div>
+        </div>
+
+        <!-- 4. inyectar ticket de prueba -->
+        <div class="hz-card">
+          <div class="hz-h">💾 Datos de prueba <span class="hz-pill warn">toca el app</span></div>
+          <div class="hz-b" id="ktSeed">Empuja un objeto de prueba a un array global del app para probar sin datos reales.</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <input type="text" id="ktSeedVar" class="mono" placeholder="global (ej. done, active)" style="flex:1;min-width:110px;font-size:11px">
+            <button class="btn sm" id="ktSeedBtn">＋ Inyectar ticket</button>
+          </div>
+          <div class="panehint" style="margin-top:5px">Añade un ticket ficticio (fecha hoy, técnico "TEST", comentario y foto) al array que nombres, y redibuja. Solo en memoria — NO escribe a Firebase.</div>
+        </div>
+
+        <!-- 5. reporte para Claude -->
+        <div class="hz-card">
+          <div class="hz-h">📋 Reporte de diagnóstico</div>
+          <div class="hz-b" id="ktReport">Junta build + errores + capacidades + salud en un texto para pegar.</div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn sm primary" id="ktReportBtn">📋 Generar y copiar</button>
+          </div>
+          <textarea id="ktReportOut" class="mono" readonly placeholder="Aquí sale el reporte…" style="width:100%;margin-top:6px;min-height:90px;font-size:10px;display:none"></textarea>
+          <div class="panehint" style="margin-top:5px">En vez de mandar 4 capturas: genera esto, cópialo y pégaselo a Claude. Lleva todo lo que necesita para diagnosticar.</div>
+        </div>
+
+        <!-- 6. buscar en el DOM -->
+        <div class="hz-card">
+          <div class="hz-h">🔍 Buscar en el app</div>
+          <div style="display:flex;gap:6px;margin-top:2px;flex-wrap:wrap">
+            <input type="text" id="ktFindInput" class="mono" placeholder="texto a buscar en el app cargado" style="flex:1;min-width:130px;font-size:11px">
+            <button class="btn sm" id="ktFindBtn">🔍</button>
+          </div>
+          <div class="hz-b" id="ktFind" style="margin-top:6px;max-height:150px;overflow:auto">—</div>
+          <div class="panehint" style="margin-top:5px">Encuentra dónde aparece un texto (ej. "Work order", el ID feo, un nombre) dentro del app renderizado.</div>
         </div>
       </div>
     </aside>
@@ -387,6 +529,16 @@
     <div class="log" id="log"></div>
     <div class="conmini">Modo <b>Non-invasive</b>: no se modifica console, fetch, XHR, Firebase ni datos; no hay observers ni wrappers. Los errores del app también salen en la consola real del navegador (F12). Aquí no se ocultan.</div>
   </section>
+
+  <div id="qaCapOverlay">
+    <div class="qa-cap-bar">
+      <span class="qa-cap-title">📄 Captura del app (pop-up / PDF)</span>
+      <span class="spacer"></span>
+      <a id="qaCapOpen" href="#" target="_blank" rel="noopener" class="btn sm ghost">Abrir en pestaña ↗</a>
+      <button class="btn sm ghost" id="qaCapClose">Cerrar ✕</button>
+    </div>
+    <iframe id="qaCapFrame" title="Captured app output"></iframe>
+  </div>
 
 <script>
 "use strict";
@@ -703,6 +855,7 @@
     var d=safeDoc();
     if(d===CROSS) logLine("warn","El app cargó pero es CROSS-ORIGIN: el sandbox no puede inspeccionar su DOM ni inyectar skins. Para inspección completa, sírvelo desde el mismo origen que este sandbox.");
     runAll();
+    if(qaCaptureOn && d && d!==CROSS){ qaPatchOpen(); }
   });
   frame.addEventListener("error",function(){ logLine("error","El iframe reportó un error al cargar: "+currentSrcLabel); });
 
@@ -1003,12 +1156,418 @@
   btnQaStop.addEventListener("click",function(){ qaStopFlag=true; logLine("info","Stress Test detenido por el usuario."); });
   qaOnlyFlagged.addEventListener("change",qaRenderResults);
 
+  /* ---------- QA capture: intercept the app's window.open to show pop-ups/PDFs inside the sandbox --- *
+   * INVASIVE (patches iframe.contentWindow.open) → only meaningful in QA mode + same-origin (RELATIVE PATH).
+   * Returns the overlay iframe's window so BOTH patterns work: blob-PDF (window.open(blobUrl)) and the
+   * print-window pattern (w=window.open(''); w.document.write(html)).
+   */
+  var qaCaptureOn=false, qaOpenOrig=null;
+  var qaCapOverlay=$("qaCapOverlay"), qaCapFrame=$("qaCapFrame"), qaCapOpen=$("qaCapOpen");
+  function qaPatchOpen(){
+    var w=safeWin(); if(!w||safeDoc()===CROSS) return;
+    try{
+      if(w.open && w.open.__qaPatched) return;            // already patched this window instance
+      qaOpenOrig=w.open;
+      var patched=function(url,name,features){
+        try{
+          qaCapFrame.removeAttribute("src");
+          if(url && url!=="" && url!=="about:blank"){ qaCapFrame.src=url; qaCapOpen.href=url; }
+          else { qaCapOpen.href="#"; }
+          qaCapOverlay.classList.add("show");
+          logLine("ok","Capturado pop-up del app"+(url?(": "+String(url).slice(0,70)):" (ventana en blanco; el app escribirá dentro)")+" — mostrado dentro del sandbox.");
+          return qaCapFrame.contentWindow;                // print-window pattern writes into the overlay iframe
+        }catch(e){ logLine("error","Captura falló: "+(e&&e.message||e)); try{ return qaOpenOrig?qaOpenOrig.call(w,url,name,features):null; }catch(_e){ return null; } }
+      };
+      patched.__qaPatched=true; w.open=patched;
+    }catch(e){ logLine("error","No se pudo interceptar window.open: "+(e&&e.message||e)); }
+  }
+  function qaUnpatchOpen(){ var w=safeWin(); try{ if(w && qaOpenOrig){ w.open=qaOpenOrig; } }catch(_e){} qaOpenOrig=null; }
+  $("qaCapture").addEventListener("change",function(e){
+    qaCaptureOn=e.target.checked;
+    if(qaCaptureOn){
+      if(!qaMode) logLine("warn","Sugerencia: activa QA mode. La captura es invasiva (intercepta window.open del app).");
+      qaPatchOpen();
+      logLine("warn","Captura de pop-ups/PDFs ACTIVADA — se intercepta window.open del app; el PDF/reporte se mostrará dentro del sandbox. Necesita RELATIVE PATH (mismo origen) y un cliente con reporte.");
+    } else { qaUnpatchOpen(); qaCapOverlay.classList.remove("show"); logLine("info","Captura de pop-ups/PDFs desactivada (window.open restaurado)."); }
+  });
+  $("qaCapClose").addEventListener("click",function(){ qaCapOverlay.classList.remove("show"); qaCapFrame.removeAttribute("src"); });
+
   /* ---------- boot -------------------------------------------------------- */
   logLine("info","HTML App Sandbox listo (Fase 1, modo NON-INVASIVE). No modifica console/fetch/XHR/Firebase/datos; sin observers ni wrappers. No asume Aspen, Customer ni ninguna función específica.");
   loadStore(); renderProfileSelect(); applyProfile(active());
   updateLens();
   logLine("info","Elige un HTML con \"Select HTML File\", o cambia a RELATIVE PATH / URL. Las capacidades se detectan solas al cargar.");
   setInterval(function(){ if(frame.getAttribute("src")) runAll(); },POLL_MS);   // passive polling only
+})();
+</script>
+
+<script>
+/* ═══════════ SALUD / HEALTH TAB ═══════════ */
+(function(){
+  // estilos
+  var css=document.createElement('style');
+  css.textContent=
+   '.hz-card{border:1px solid var(--line,#2a3642);border-radius:9px;padding:10px 11px;margin-bottom:9px;background:var(--card,#141c24)}'+
+   '.hz-h{font-size:12px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:6px}'+
+   '.hz-b{font-size:12px;line-height:1.55;color:var(--muted,#93a4b3)}'+
+   '.hz-b .mono{font-family:ui-monospace,Menlo,monospace;font-size:11px}'+
+   '.hz-ok{color:#37c26f}.hz-bad{color:#ff6b5e}.hz-warn{color:#e6a94f}'+
+   '.hz-pill{display:inline-block;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;margin-left:auto}'+
+   '.hz-pill.ok{background:rgba(55,194,111,.16);color:#37c26f}'+
+   '.hz-pill.bad{background:rgba(255,107,94,.16);color:#ff6b5e}'+
+   '.hz-pill.warn{background:rgba(230,169,79,.16);color:#e6a94f}'+
+   '.hz-row{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05);display:flex;gap:8px;align-items:baseline}'+
+   '.hz-row:last-child{border-bottom:0}'+
+   '.hz-big{font-size:20px;font-weight:800}'+
+   '.hz-err-item{padding:6px 8px;margin:4px 0;background:rgba(255,107,94,.09);border-left:3px solid #ff6b5e;border-radius:0 6px 6px 0;font-size:11px;font-family:ui-monospace,Menlo,monospace;color:#ff8a7f;word-break:break-word}'+
+   '.hz-chk{padding:5px 0;font-size:12px;display:flex;gap:8px;align-items:baseline;line-height:1.5}'+
+   '.hz-chk b{color:var(--fg,#e8eef3)}';
+  document.head.appendChild(css);
+
+  function W(){ try{ return frame.contentWindow||null; }catch(_){ return null; } }
+  function D(){ try{ var w=W(); return w&&w.document||null; }catch(_){ return null; } }
+  function set(id,html){ var e=document.getElementById(id); if(e) e.innerHTML=html; }
+
+  // ---------- 1 + 2 · build stamp + comparación ----------
+  function readBuild(){
+    var w=W(); if(!w) return null;
+    // busca variables tipo *_BUILD o V*_BUILD expuestas por el app
+    try{
+      for(var k in w){ if(/_BUILD$/.test(k) && typeof w[k]==='string' && w[k].length<80) return {key:k,val:w[k]}; }
+    }catch(_){}
+    return null;
+  }
+  function scanBuild(){
+    var w=W();
+    if(!w){ set('hzBuild','<span class="hz-warn">No hay app cargado.</span>'); return; }
+    var b=readBuild();
+    if(!b){ set('hzBuild','<span class="hz-warn">Este app no expone un <span class="mono">*_BUILD</span>. Tip: agrega <span class="mono">window.MI_BUILD=\'fecha-x\'</span> para rastrear versiones.</span>'); }
+    else { set('hzBuild','<div class="hz-row"><span class="mono" style="color:var(--muted)">'+b.key+'</span></div><div class="hz-big mono" style="color:#37c26f">'+b.val+'</div>'); }
+    cmpBuild();
+  }
+  function cmpBuild(){
+    var exp=(document.getElementById('hzExpBuild')||{}).value||'';
+    exp=exp.trim();
+    var b=readBuild();
+    if(!exp){ set('hzCmp','<span style="color:var(--muted)">Pega arriba el build esperado para comparar.</span>'); return; }
+    if(!b){ set('hzCmp','<span class="hz-warn">No puedo leer el build del app.</span>'); return; }
+    if(b.val===exp) set('hzCmp','<span class="hz-pill ok">COINCIDE</span> <span class="hz-ok">Estás viendo la versión esperada.</span>');
+    else set('hzCmp','<span class="hz-pill bad">NO COINCIDE</span><br>cargado: <span class="mono hz-bad">'+b.val+'</span><br>esperado: <span class="mono">'+exp+'</span><br><span class="hz-warn" style="font-size:11px">→ Es caché o deploy pendiente. Haz Cmd+Shift+R o revisa el deployment. No toques el código.</span>');
+  }
+
+  // ---------- 3 · detector de bucles ----------
+  var loopObs=null, loopTimer=null, loopCount=0, loopT0=0;
+  function loopStart(){
+    var d=D();
+    if(!d){ set('hzLoop','<span class="hz-warn">No hay app cargado (o es cross-origin).</span>'); return; }
+    loopCount=0; loopT0=Date.now();
+    try{
+      loopObs=new (W().MutationObserver)(function(muts){ loopCount+=muts.length; });
+      loopObs.observe(d.body,{childList:true,subtree:true,characterData:true,attributes:false});
+    }catch(e){ set('hzLoop','<span class="hz-bad">No pude observar: '+(e.message||e)+'</span>'); return; }
+    document.getElementById('hzLoopBtn').disabled=true;
+    document.getElementById('hzLoopStop').disabled=false;
+    set('hzLoop','<span class="hz-warn">Midiendo…</span>');
+    var tick=function(){
+      var secs=(Date.now()-loopT0)/1000;
+      var rate=loopCount/Math.max(secs,.1);
+      var cls=rate>200?'hz-bad':rate>40?'hz-warn':'hz-ok';
+      var verdict=rate>200?'⚠ BUCLE probable':rate>40?'algo inquieto':'estable';
+      set('hzLoop','<span class="hz-big '+cls+'">'+Math.round(rate)+'</span> <span style="font-size:11px">mutaciones/seg · <b class="'+cls+'">'+verdict+'</b></span><br><span style="font-size:11px;color:var(--muted)">'+loopCount+' cambios en '+secs.toFixed(1)+'s</span>');
+    };
+    loopTimer=setInterval(tick,300);
+    setTimeout(loopStop,3000);
+  }
+  function loopStop(){
+    if(loopTimer){ clearInterval(loopTimer); loopTimer=null; }
+    if(loopObs){ try{loopObs.disconnect();}catch(_){} loopObs=null; }
+    var b=document.getElementById('hzLoopBtn'), s=document.getElementById('hzLoopStop');
+    if(b) b.disabled=false; if(s) s.disabled=true;
+    var secs=(Date.now()-loopT0)/1000, rate=loopCount/Math.max(secs,.1);
+    var cls=rate>200?'hz-bad':rate>40?'hz-warn':'hz-ok';
+    var verdict=rate>200?'⚠ BUCLE INFINITO — algo se repinta sin parar':rate>40?'inquieto pero puede ser normal al cargar':'✓ estable';
+    set('hzLoop','<span class="hz-big '+cls+'">'+Math.round(rate)+'</span> <span style="font-size:11px">mut/seg final · <b class="'+cls+'">'+verdict+'</b></span>');
+  }
+
+  // ---------- 4 · probar botones ----------
+  function scanButtons(){
+    var d=D(), w=W();
+    if(!d){ set('hzBtns','<span class="hz-warn">No hay app cargado (o cross-origin).</span>'); return; }
+    var btns=[].slice.call(d.querySelectorAll('button, [role=button], a.btn'));
+    var vis=btns.filter(function(b){ try{ var r=b.getBoundingClientRect(); return r.width>0&&r.height>0; }catch(_){ return false; } });
+    var dead=[], ok=0, emptyTxt=0;
+    vis.forEach(function(b){
+      var hasInline=!!(b.getAttribute && (b.getAttribute('onclick')||b.getAttribute('data-v7act')||b.getAttribute('data-action')));
+      var txt=(b.textContent||'').trim();
+      if(!txt) emptyTxt++;
+      // heurística: sin onclick inline y sin texto suele ser botón roto
+      if(!hasInline && !txt) dead.push('(botón vacío sin handler)');
+      else if(!hasInline){ /* puede tener listener JS no detectable — lo marcamos aparte */ }
+      if(hasInline) ok++;
+    });
+    var noInline=vis.length-ok;
+    var html='<div class="hz-row"><span class="hz-big">'+vis.length+'</span><span style="font-size:11px">botones visibles</span></div>';
+    html+='<div style="font-size:11px;margin-top:4px">'+
+      '<span class="hz-ok">'+ok+'</span> con handler inline detectable · '+
+      '<span class="'+(noInline?'hz-warn':'')+'">'+noInline+'</span> sin handler inline'+
+      (emptyTxt?(' · <span class="hz-bad">'+emptyTxt+' con texto vacío</span>'):'')+'</div>';
+    if(emptyTxt) html+='<div class="hz-warn" style="font-size:11px;margin-top:5px">⚠ '+emptyTxt+' botón(es) sin texto → posible HTML roto (como el bug de hoy).</div>';
+    if(noInline && !emptyTxt) html+='<div style="font-size:11px;margin-top:5px;color:var(--muted)">Los "sin handler inline" pueden tener listeners por JS (addEventListener) — no siempre están rotos.</div>';
+    set('hzBtns',html);
+  }
+
+  // ---------- 5 · panel de errores ----------
+  var hzErrors=[];
+  function pushErr(msg){
+    hzErrors.unshift({t:new Date().toLocaleTimeString(),m:String(msg).slice(0,300)});
+    if(hzErrors.length>40) hzErrors.pop();
+    renderErr();
+  }
+  function renderErr(){
+    var n=document.getElementById('hzErrN'); if(n) n.textContent=hzErrors.length;
+    if(!hzErrors.length){ set('hzErr','<span style="color:var(--muted)">Sin errores capturados. 👍</span>'); return; }
+    set('hzErr', hzErrors.map(function(e){ return '<div class="hz-err-item"><span style="opacity:.6">'+e.t+'</span> '+e.m.replace(/</g,'&lt;')+'</div>'; }).join(''));
+  }
+  function hookErrors(){
+    var w=W(); if(!w) return;
+    if(w.__hzHooked) return; try{ w.__hzHooked=1; }catch(_){ return; }
+    // error global del app
+    try{ w.addEventListener('error',function(ev){ pushErr((ev.message||'Error')+(ev.filename?(' @'+String(ev.filename).split('/').pop()+':'+ev.lineno):'')); }); }catch(_){}
+    try{ w.addEventListener('unhandledrejection',function(ev){ pushErr('Promesa rechazada: '+((ev.reason&&ev.reason.message)||ev.reason||'?')); }); }catch(_){}
+    // envolver console.error del iframe
+    try{
+      var ce=w.console&&w.console.error;
+      if(ce && !ce.__hz){ var wrap=function(){ try{pushErr([].slice.call(arguments).join(' '));}catch(_){} return ce.apply(w.console,arguments); }; wrap.__hz=1; w.console.error=wrap; }
+    }catch(_){}
+  }
+
+  // ---------- 6 · checklist de deploy ----------
+  function renderDeploy(){
+    var steps=[
+      ['1','Subir el <b>index.html</b> nuevo al repo (Add file → Upload files).'],
+      ['2','Editar <b>CACHE_VERSION</b> en <span class="mono">sw.js</span> (línea ~34): subir el número, ej. <span class="mono">v1.9.4 → v1.9.5</span>.'],
+      ['3','Subir <b>sw.js</b> también. <span class="hz-warn">Si no cambias CACHE_VERSION, el navegador sirve el index viejo.</span>'],
+      ['4','Esperar en el repo: <b>Deployments → github-pages</b> en verde, "less than a minute ago".'],
+      ['5','En la app: <b>Cmd+Shift+R</b> (hard refresh).'],
+      ['6','Verificar en consola 2 líneas: <span class="mono">[SW] Deleting old cache…</span> y <span class="mono">[…] build … activo</span>.'],
+      ['★','¿Pegado? F12 → Application → Service Workers → <b>Unregister</b> → recarga. O ventana incógnito para ver el server real.']
+    ];
+    set('hzDeploy', steps.map(function(s){ return '<div class="hz-chk"><b style="color:#37c26f;min-width:14px">'+s[0]+'</b><span>'+s[1]+'</span></div>'; }).join(''));
+  }
+
+  // wire
+  function wireHealth(){
+    var byId=function(i){return document.getElementById(i);};
+    if(byId('hzBtnScan')) byId('hzBtnScan').addEventListener('click',scanButtons);
+    if(byId('hzLoopBtn')) byId('hzLoopBtn').addEventListener('click',loopStart);
+    if(byId('hzLoopStop')) byId('hzLoopStop').addEventListener('click',loopStop);
+    if(byId('hzErrClear')) byId('hzErrClear').addEventListener('click',function(){ hzErrors=[]; renderErr(); });
+    if(byId('hzExpBuild')) byId('hzExpBuild').addEventListener('input',cmpBuild);
+    renderDeploy(); renderErr();
+    // cuando se abre la pestaña Salud, escanear build + enganchar errores
+    Array.prototype.forEach.call(document.querySelectorAll('.tabs button'),function(t){
+      if(t.getAttribute('data-tab')==='health'){
+        t.addEventListener('click',function(){ setTimeout(function(){ scanBuild(); hookErrors(); },50); });
+      }
+    });
+    // re-enganchar errores cada vez que carga un app nuevo
+    try{
+      var fr=frame;
+      fr.addEventListener('load',function(){ setTimeout(function(){ hookErrors(); scanBuild(); },300); });
+    }catch(_){}
+  }
+  if(document.readyState!=='loading') wireHealth();
+  else document.addEventListener('DOMContentLoaded',wireHealth);
+})();
+</script>
+
+<script>
+/* ═══════════ KIT / HERRAMIENTAS EXTRA ═══════════ */
+(function(){
+  function W(){ try{ return frame.contentWindow||null; }catch(_){ return null; } }
+  function D(){ try{ var w=W(); return w&&w.document||null; }catch(_){ return null; } }
+  function set(id,html){ var e=document.getElementById(id); if(e) e.innerHTML=html; }
+  function esc(s){ return String(s).replace(/</g,'&lt;'); }
+  function readBuild(){ var w=W(); if(!w) return ''; try{ for(var k in w){ if(/_BUILD$/.test(k)&&typeof w[k]==='string'&&w[k].length<80) return w[k]; } }catch(_){} return ''; }
+
+  // ---------- 1 · snapshot ----------
+  var snap=null;
+  function takeSnapshot(){
+    var w=W(), d=D();
+    if(!w){ set('ktSnap','<span class="hz-warn">No hay app cargado.</span>'); return null; }
+    var globals=0; try{ for(var k in w){ globals++; } }catch(_){}
+    // capacidades: leídas de la lista ya renderizada
+    var caps={}; try{ [].forEach.call(document.querySelectorAll('#capList [data-cap], #capList .cap-row'),function(r){ }); }catch(_){}
+    var capText=''; try{ capText=(document.getElementById('capList')||{}).textContent||''; }catch(_){}
+    var rows=0; try{ rows=d?d.querySelectorAll('[data-v7act],button').length:0; }catch(_){}
+    var nodes=0; try{ nodes=d?d.getElementsByTagName('*').length:0; }catch(_){}
+    return { t:new Date().toLocaleTimeString(), build:readBuild(), globals:globals, nodes:nodes, buttons:rows, cap:capText.replace(/\s+/g,' ').slice(0,400) };
+  }
+  function snapTake(){
+    var s=takeSnapshot(); if(!s) return;
+    snap=s;
+    set('ktSnap','<span class="hz-pill ok">GUARDADO</span> '+s.t+'<br><span style="font-size:11px">build <span class="mono">'+esc(s.build||'—')+'</span> · '+s.globals+' globals · '+s.nodes+' nodos · '+s.buttons+' botones</span>');
+    document.getElementById('ktSnapCmp').disabled=false;
+    document.getElementById('ktSnapClear').disabled=false;
+  }
+  function snapCmp(){
+    if(!snap){ return; }
+    var now=takeSnapshot(); if(!now) return;
+    function line(label,a,b){ var same=String(a)===String(b); return '<div class="hz-row"><span style="min-width:70px;font-size:11px;color:var(--muted)">'+label+'</span><span class="'+(same?'hz-ok':'hz-bad')+'" style="font-size:11px">'+(same?('= '+esc(String(a).slice(0,40))):('≠ '+esc(String(a).slice(0,22))+' → '+esc(String(b).slice(0,22))))+'</span></div>'; }
+    var html='<b style="font-size:11px">snapshot ('+snap.t+') vs ahora ('+now.t+')</b>';
+    html+=line('build',snap.build||'—',now.build||'—');
+    html+=line('globals',snap.globals,now.globals);
+    html+=line('nodos',snap.nodes,now.nodes);
+    html+=line('botones',snap.buttons,now.buttons);
+    var capSame=snap.cap===now.cap;
+    html+='<div class="hz-row"><span style="min-width:70px;font-size:11px;color:var(--muted)">capacid.</span><span class="'+(capSame?'hz-ok':'hz-warn')+'" style="font-size:11px">'+(capSame?'= iguales':'≠ cambiaron')+'</span></div>';
+    var allSame = snap.build===now.build && snap.globals===now.globals && capSame;
+    html+='<div style="margin-top:6px;font-size:11px" class="'+(allSame?'hz-ok':'hz-warn')+'">'+(allSame?'✓ Parece el MISMO app/versión.':'⚠ Hay diferencias — es otra versión o cargó distinto.')+'</div>';
+    set('ktSnap',html);
+  }
+  function snapClear(){ snap=null; document.getElementById('ktSnapCmp').disabled=true; document.getElementById('ktSnapClear').disabled=true; set('ktSnap','Snapshot borrado. Toma uno nuevo.'); }
+
+  // ---------- 2 · rendimiento ----------
+  function perf(){
+    var w=W(), d=D();
+    if(!d){ set('ktPerf','<span class="hz-warn">No hay app cargado (o cross-origin).</span>'); return; }
+    var nodes=0,scripts=0,imgs=0,styles=0,inlineJS=0,htmlBytes=0;
+    try{
+      nodes=d.getElementsByTagName('*').length;
+      scripts=d.scripts?d.scripts.length:0;
+      imgs=d.images?d.images.length:0;
+      styles=d.querySelectorAll('style,link[rel=stylesheet]').length;
+      try{ [].forEach.call(d.scripts,function(s){ if(!s.src&&s.textContent) inlineJS+=s.textContent.length; }); }catch(_){}
+      try{ htmlBytes=d.documentElement.outerHTML.length; }catch(_){}
+    }catch(_){}
+    var mem=''; try{ if(w.performance&&w.performance.memory){ var mb=(w.performance.memory.usedJSHeapSize/1048576).toFixed(1); mem='<div class="hz-row"><span style="min-width:90px;font-size:11px;color:var(--muted)">memoria JS</span><b>'+mb+' MB</b></div>'; } }catch(_){}
+    var load=''; try{ var nav=w.performance&&w.performance.timing; if(nav&&nav.loadEventEnd&&nav.navigationStart){ var ms=nav.loadEventEnd-nav.navigationStart; if(ms>0&&ms<600000) load='<div class="hz-row"><span style="min-width:90px;font-size:11px;color:var(--muted)">carga</span><b>'+(ms/1000).toFixed(2)+'s</b></div>'; } }catch(_){}
+    function row(l,v,warn){ return '<div class="hz-row"><span style="min-width:90px;font-size:11px;color:var(--muted)">'+l+'</span><b class="'+(warn?'hz-warn':'')+'">'+v+'</b></div>'; }
+    set('ktPerf',
+      row('DOM (nodos)',nodes, nodes>4000)+
+      row('HTML',(htmlBytes/1024).toFixed(0)+' KB', htmlBytes>2500000)+
+      row('scripts',scripts+(inlineJS?(' · '+(inlineJS/1024).toFixed(0)+'KB inline'):''))+
+      row('imágenes',imgs, imgs>60)+
+      row('estilos',styles)+ mem + load +
+      (nodes>4000?'<div class="hz-warn" style="font-size:11px;margin-top:5px">⚠ DOM pesado (>4000 nodos) puede ir lento en móvil.</div>':'')
+    );
+  }
+
+  // ---------- 3 · móvil / toque ----------
+  var mobileOn=false;
+  function mobileCheck(){
+    var d=D();
+    if(!d){ set('ktMobile','<span class="hz-warn">No hay app cargado (o cross-origin).</span>'); return; }
+    var tappables=[].slice.call(d.querySelectorAll('button, a, input, select, [role=button]'));
+    var vis=tappables.filter(function(b){ try{ var r=b.getBoundingClientRect(); return r.width>0&&r.height>0; }catch(_){ return false; } });
+    var small=0, tinyText=0;
+    vis.forEach(function(b){
+      try{ var r=b.getBoundingClientRect(); if(r.height<44||r.width<44) small++; }catch(_){}
+      try{ var w=W(); var fs=parseFloat(w.getComputedStyle(b).fontSize); if(fs&&fs<12) tinyText++; }catch(_){}
+    });
+    var okTap = small===0;
+    set('ktMobile',
+      '<div class="hz-row"><span class="hz-big '+(okTap?'hz-ok':'hz-warn')+'">'+small+'</span><span style="font-size:11px">de '+vis.length+' elementos son <b>&lt;44px</b> (difíciles con el dedo)</span></div>'+
+      (tinyText?('<div style="font-size:11px" class="hz-warn">'+tinyText+' con texto &lt;12px (chico para leer en móvil)</div>'):'')+
+      (okTap&&!tinyText?'<div class="hz-ok" style="font-size:11px;margin-top:4px">✓ Tamaños táctiles OK.</div>':'')
+    );
+  }
+  function mobileToggle(){
+    mobileOn=!mobileOn;
+    try{
+      if(mobileOn){ frame.style.maxWidth='390px'; frame.style.margin='0 auto'; frame.style.border='3px solid #333'; frame.style.borderRadius='18px'; }
+      else { frame.style.maxWidth=''; frame.style.margin=''; frame.style.border=''; frame.style.borderRadius=''; }
+    }catch(_){}
+    var b=document.getElementById('ktMobileToggle'); if(b) b.textContent=mobileOn?'🖥 Vista normal':'📱 Vista móvil';
+  }
+
+  // ---------- 4 · seed ticket de prueba ----------
+  function seedTicket(){
+    var w=W(); if(!w){ set('ktSeed','<span class="hz-warn">No hay app cargado.</span>'); return; }
+    var name=(document.getElementById('ktSeedVar').value||'').trim();
+    if(!name){ set('ktSeed','<span class="hz-warn">Escribe el nombre del array global (ej. done).</span>'); return; }
+    var arr; try{ arr=w[name]; }catch(_){ arr=null; }
+    if(!Array.isArray(arr)){ set('ktSeed','<span class="hz-bad">w.'+esc(name)+' no es un array. Prueba con "done" o "active".</span>'); return; }
+    var t={ id:'TEST-'+Date.now(), customer:'ZZ TEST Cliente', date:new Date().toISOString().slice(0,10),
+      techs:['TEST'], status:'done', servicePerformed:'Ticket de prueba inyectado desde el sandbox para revisar el reporte.',
+      parts:[{qty:1,c:'TEST-01',n:'Parte de prueba'}], photoUrls:[], total:0 };
+    try{ arr.push(t); }catch(e){ set('ktSeed','<span class="hz-bad">No pude inyectar: '+esc(e.message)+'</span>'); return; }
+    // intentar redibujar
+    var painted=false;
+    ['v7RenderCustomer','render','rndrCust','renderApp'].forEach(function(fn){ if(!painted&&typeof w[fn]==='function'){ try{ w[fn](); painted=true; }catch(_){} } });
+    set('ktSeed','<span class="hz-pill ok">INYECTADO</span> ticket <span class="mono">'+t.id+'</span> en w.'+esc(name)+' ('+arr.length+' items)'+(painted?' · vista redibujada':' · <span class="hz-warn">no encontré función de redibujo, recarga la vista</span>'));
+  }
+
+  // ---------- 5 · reporte de diagnóstico ----------
+  function genReport(){
+    var w=W(), d=D();
+    var L=[];
+    L.push('=== REPORTE DE DIAGNÓSTICO · HTML App Sandbox ===');
+    L.push('fecha: '+new Date().toLocaleString());
+    try{ L.push('fuente: '+(currentSrcLabel||frame.getAttribute('src')||'—')); }catch(_){}
+    L.push('build: '+(readBuild()||'(no expone *_BUILD)'));
+    // capacidades
+    try{ var cap=(document.getElementById('capList')||{}).textContent||''; L.push('capacidades: '+cap.replace(/\s+/g,' ').trim().slice(0,300)); }catch(_){}
+    // perf básico
+    try{ if(d){ L.push('DOM: '+d.getElementsByTagName('*').length+' nodos · '+(d.scripts?d.scripts.length:0)+' scripts · '+(d.images?d.images.length:0)+' imgs'); } }catch(_){}
+    try{ if(w.performance&&w.performance.memory){ L.push('memoria JS: '+(w.performance.memory.usedJSHeapSize/1048576).toFixed(1)+' MB'); } }catch(_){}
+    // errores capturados (de la pestaña Salud, si existe)
+    try{
+      var errItems=document.querySelectorAll('#hzErr .hz-err-item');
+      if(errItems.length){ L.push('errores ('+errItems.length+'):'); [].slice.call(errItems).slice(0,10).forEach(function(e){ L.push('  - '+e.textContent.trim().slice(0,160)); }); }
+      else L.push('errores: ninguno capturado');
+    }catch(_){}
+    // botones
+    try{ if(d){ var vis=[].slice.call(d.querySelectorAll('button')).filter(function(b){var r=b.getBoundingClientRect();return r.width>0;}); var empty=vis.filter(function(b){return !(b.textContent||'').trim();}).length; L.push('botones visibles: '+vis.length+(empty?(' · '+empty+' SIN TEXTO (posible roto)'):'')); } }catch(_){}
+    L.push('=== fin ===');
+    var txt=L.join('\n');
+    var ta=document.getElementById('ktReportOut'); ta.style.display='block'; ta.value=txt;
+    // copiar
+    try{ ta.select(); document.execCommand('copy'); set('ktReport','<span class="hz-pill ok">COPIADO</span> Pégaselo a Claude (Cmd+V).'); }
+    catch(_){ set('ktReport','<span class="hz-warn">Selecciona el texto de abajo y cópialo manualmente.</span>'); }
+  }
+
+  // ---------- 6 · buscar en el DOM ----------
+  function findInApp(){
+    var d=D();
+    var q=(document.getElementById('ktFindInput').value||'').trim();
+    if(!d){ set('ktFind','<span class="hz-warn">No hay app cargado (o cross-origin).</span>'); return; }
+    if(!q){ set('ktFind','Escribe algo para buscar.'); return; }
+    var hits=[], ql=q.toLowerCase();
+    try{
+      var walker=d.createTreeWalker(d.body, (W().NodeFilter||{}).SHOW_TEXT||4, null, false);
+      var n, count=0;
+      while((n=walker.nextNode()) && count<12){
+        var txt=(n.nodeValue||'').trim();
+        if(txt && txt.toLowerCase().indexOf(ql)>=0){
+          var el=n.parentNode;
+          var tag=el?el.tagName.toLowerCase():'?';
+          var cls=el&&el.className&&typeof el.className==='string'?('.'+el.className.split(' ')[0]):'';
+          hits.push('<div class="hz-row"><span class="mono" style="font-size:10px;color:var(--muted);min-width:60px">'+tag+cls+'</span><span style="font-size:11px">'+esc(txt.slice(0,70))+'</span></div>');
+          count++;
+        }
+      }
+    }catch(e){ set('ktFind','<span class="hz-bad">Error: '+esc(e.message)+'</span>'); return; }
+    if(!hits.length){ set('ktFind','<span style="color:var(--muted)">Sin coincidencias de "'+esc(q)+'".</span>'); return; }
+    set('ktFind','<b style="font-size:11px">'+hits.length+' coincidencia(s):</b>'+hits.join(''));
+  }
+
+  // wire
+  function wireKit(){
+    var id=function(i){return document.getElementById(i);};
+    if(id('ktSnapTake')) id('ktSnapTake').addEventListener('click',snapTake);
+    if(id('ktSnapCmp')) id('ktSnapCmp').addEventListener('click',snapCmp);
+    if(id('ktSnapClear')) id('ktSnapClear').addEventListener('click',snapClear);
+    if(id('ktPerfBtn')) id('ktPerfBtn').addEventListener('click',perf);
+    if(id('ktMobileBtn')) id('ktMobileBtn').addEventListener('click',mobileCheck);
+    if(id('ktMobileToggle')) id('ktMobileToggle').addEventListener('click',mobileToggle);
+    if(id('ktSeedBtn')) id('ktSeedBtn').addEventListener('click',seedTicket);
+    if(id('ktReportBtn')) id('ktReportBtn').addEventListener('click',genReport);
+    if(id('ktFindBtn')) id('ktFindBtn').addEventListener('click',findInApp);
+    if(id('ktFindInput')) id('ktFindInput').addEventListener('keydown',function(e){ if(e.key==='Enter') findInApp(); });
+  }
+  if(document.readyState!=='loading') wireKit();
+  else document.addEventListener('DOMContentLoaded',wireKit);
 })();
 </script>
 </body>
